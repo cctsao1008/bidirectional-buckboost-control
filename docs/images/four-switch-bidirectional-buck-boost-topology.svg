@@ -1,103 +1,118 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
-  <title id="title">Four-Switch Bidirectional Buck-Boost Topology</title>
-  <desc id="desc">Two synchronous half bridges connected through a single inductor, with Q1 and Q2 on the left and Q4 and Q3 on the right.</desc>
-  <style>
-    .wire { stroke:#111; stroke-width:4; fill:none; stroke-linecap:round; stroke-linejoin:round; }
-    .thin { stroke:#111; stroke-width:3; fill:none; stroke-linecap:round; stroke-linejoin:round; }
-    .node { fill:#111; }
-    .open { fill:#fff; stroke:#111; stroke-width:4; }
-    .label { font-family:Arial,Helvetica,sans-serif; fill:#111; font-size:30px; }
-    .small { font-family:Arial,Helvetica,sans-serif; fill:#333; font-size:24px; }
-    .title { font-family:Arial,Helvetica,sans-serif; fill:#111; font-size:44px; font-weight:700; }
-  </style>
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="600" viewBox="0 0 680 600" role="img" aria-labelledby="t d">
+<title id="t">Four-switch bidirectional buck-boost topology</title>
+<desc id="d">Two synchronous half bridges, Q1/Q2 on the buck side and Q4/Q3 on the boost side, joined by a 22 uH inductor and a 1 mOhm current shunt, with 2 x 220 uF bulk capacitance at each port.</desc>
+<style>
+:root{--ink:#24292f;--muted:#57606a;--bg:#ffffff;--accent:#1a7f5f}
+@media (prefers-color-scheme:dark){:root{--ink:#e6edf3;--muted:#9198a1;--bg:#0d1117;--accent:#3fb950}}
+.w{fill:none;stroke:var(--ink);stroke-width:1.4}
+.rc{stroke-linecap:round}
+.fp{fill:var(--ink)}
+.term{fill:var(--bg);stroke:var(--ink);stroke-width:1.4}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.h{font-size:20px;font-weight:600;fill:var(--ink)}
+.th{font-size:14px;font-weight:500;fill:var(--ink)}
+.ts{font-size:12px;fill:var(--muted)}
+.ac{stroke:var(--accent);stroke-width:1.4;fill:none}
+.act{font-size:12px;fill:var(--accent)}
+</style>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<g id="nmos" class="w">
+<path class="rc" d="M-50 0H-32"/>
+<path d="M-32 -20V20"/>
+<path d="M-24 -20V-10M-24 -4.5V4.5M-24 10V20"/>
+<path class="rc" d="M-24 -20H20M0 -20V-34"/>
+<path class="rc" d="M-24 20H20M0 20V34"/>
+<path d="M-14 0H0M0 0V20"/>
+<polygon class="fp" points="-24,0 -13,-4 -13,4" stroke="none"/>
+<path d="M20 -20V-6M20 8V20"/>
+<polygon class="fp" points="14,8 26,8 20,-6" stroke="none"/>
+<path class="rc" d="M14 -6H26"/>
+<circle cx="-52" cy="0" r="3" fill="var(--bg)"/>
+</g>
+</defs>
 
-  <text x="600" y="62" text-anchor="middle" class="title">Four-Switch Bidirectional Buck-Boost Topology</text>
+<text class="h" x="340" y="40" text-anchor="middle">Four-switch bidirectional buck-boost topology</text>
 
-  <!-- Port rails -->
-  <circle cx="90" cy="150" r="10" class="open"/>
-  <circle cx="1110" cy="150" r="10" class="open"/>
-  <circle cx="90" cy="565" r="10" class="open"/>
-  <circle cx="1110" cy="565" r="10" class="open"/>
-  <path d="M90 565 H1110" class="wire"/>
-  <path d="M90 150 H340" class="wire"/>
-  <path d="M860 150 H1110" class="wire"/>
+<g class="w rc" transform="translate(0,30)">
+<path d="M60 110H225"/>
+<path d="M455 110H615"/>
+<path d="M60 440H615"/>
+<path d="M110 110V264M110 279V440"/>
+<path d="M95 264H125M95 279H125"/>
+<path d="M545 110V264M545 279V440"/>
+<path d="M530 264H560M530 279H560"/>
+<path d="M225 110V146"/>
+<path d="M455 110V146"/>
+<path d="M225 214V326"/>
+<path d="M455 214V326"/>
+<path d="M225 394V440"/>
+<path d="M455 394V440"/>
+<path d="M225 270H275"/>
+<path d="M309 270H330"/>
+<path d="M410 270H455"/>
+<path d="M330 270a10 10 0 0 1 20 0a10 10 0 0 1 20 0a10 10 0 0 1 20 0a10 10 0 0 1 20 0"/>
+<rect x="275" y="262" width="34" height="16" rx="2"/>
+</g>
 
-  <text x="55" y="132" class="label">+</text>
-  <text x="55" y="385" class="label">Vin</text>
-  <text x="1030" y="385" class="label">Vout</text>
-  <text x="44" y="610" class="label">GND</text>
-  <text x="1030" y="610" class="label">GND</text>
-  <text x="1090" y="132" class="label">+</text>
+<g transform="translate(0,30)">
+<use href="#nmos" transform="translate(225,180)"/>
+<use href="#nmos" transform="translate(225,360)"/>
+<use href="#nmos" transform="translate(455,180) scale(-1,1)"/>
+<use href="#nmos" transform="translate(455,360) scale(-1,1)"/>
 
-  <!-- Left half bridge vertical path -->
-  <path d="M340 150 V220" class="wire"/>
-  <path d="M340 315 V390" class="wire"/>
-  <path d="M340 485 V565" class="wire"/>
-  <circle cx="340" cy="352" r="7" class="node"/>
+<g class="fp">
+<circle cx="225" cy="270" r="3.5"/>
+<circle cx="455" cy="270" r="3.5"/>
+<circle cx="225" cy="440" r="3.5"/>
+<circle cx="455" cy="440" r="3.5"/>
+<circle cx="110" cy="110" r="3.5"/>
+<circle cx="110" cy="440" r="3.5"/>
+<circle cx="545" cy="110" r="3.5"/>
+<circle cx="545" cy="440" r="3.5"/>
+</g>
 
-  <!-- Right half bridge vertical path -->
-  <path d="M860 150 V220" class="wire"/>
-  <path d="M860 315 V390" class="wire"/>
-  <path d="M860 485 V565" class="wire"/>
-  <circle cx="860" cy="352" r="7" class="node"/>
+<g class="term">
+<circle cx="60" cy="110" r="4.5"/>
+<circle cx="615" cy="110" r="4.5"/>
+<circle cx="60" cy="440" r="4.5"/>
+<circle cx="615" cy="440" r="4.5"/>
+</g>
 
-  <!-- Simplified MOSFET Q1 -->
-  <path d="M322 220 V315 M358 220 V315" class="thin"/>
-  <path d="M340 220 V240 M340 295 V315" class="wire"/>
-  <path d="M270 268 H312" class="thin"/>
-  <path d="M312 240 V296" class="thin"/>
-  <path d="M358 255 H382 V282 H358" class="thin"/>
-  <path d="M370 250 V287" class="thin"/>
-  <path d="M362 271 L370 260 L378 271" class="thin"/>
-  <circle cx="270" cy="268" r="8" class="open"/>
-  <text x="400" y="280" class="label">Q1</text>
+<text class="th" x="60" y="64" text-anchor="middle">Vin</text>
+<text class="ts" x="60" y="84" text-anchor="middle">12–48 V</text>
+<text class="ts" x="44" y="110" text-anchor="middle" dominant-baseline="central">+</text>
+<text class="th" x="615" y="64" text-anchor="middle">Vout</text>
+<text class="ts" x="615" y="84" text-anchor="middle">5–48 V</text>
+<text class="ts" x="631" y="110" text-anchor="middle" dominant-baseline="central">+</text>
+<text class="ts" x="60" y="466" text-anchor="middle">GND</text>
+<text class="ts" x="615" y="466" text-anchor="middle">GND</text>
 
-  <!-- Simplified MOSFET Q2 -->
-  <path d="M322 390 V485 M358 390 V485" class="thin"/>
-  <path d="M340 390 V410 M340 465 V485" class="wire"/>
-  <path d="M270 438 H312" class="thin"/>
-  <path d="M312 410 V466" class="thin"/>
-  <path d="M358 425 H382 V452 H358" class="thin"/>
-  <path d="M370 420 V457" class="thin"/>
-  <path d="M362 441 L370 430 L378 441" class="thin"/>
-  <circle cx="270" cy="438" r="8" class="open"/>
-  <text x="400" y="450" class="label">Q2</text>
+<text class="ts" x="134" y="266">Cin</text>
+<text class="ts" x="134" y="282">2 × 220 µF</text>
+<text class="ts" x="562" y="266">Cout</text>
+<text class="ts" x="562" y="282">2 × 220 µF</text>
 
-  <!-- Simplified MOSFET Q4 -->
-  <path d="M842 220 V315 M878 220 V315" class="thin"/>
-  <path d="M860 220 V240 M860 295 V315" class="wire"/>
-  <path d="M790 268 H832" class="thin"/>
-  <path d="M832 240 V296" class="thin"/>
-  <path d="M878 255 H902 V282 H878" class="thin"/>
-  <path d="M890 250 V287" class="thin"/>
-  <path d="M882 271 L890 260 L898 271" class="thin"/>
-  <circle cx="790" cy="268" r="8" class="open"/>
-  <text x="920" y="280" class="label">Q4</text>
+<text class="th" x="266" y="180" dominant-baseline="central">Q1</text>
+<text class="th" x="266" y="360" dominant-baseline="central">Q2</text>
+<text class="th" x="414" y="180" text-anchor="end" dominant-baseline="central">Q4</text>
+<text class="th" x="414" y="360" text-anchor="end" dominant-baseline="central">Q3</text>
 
-  <!-- Simplified MOSFET Q3 -->
-  <path d="M842 390 V485 M878 390 V485" class="thin"/>
-  <path d="M860 390 V410 M860 465 V485" class="wire"/>
-  <path d="M790 438 H832" class="thin"/>
-  <path d="M832 410 V466" class="thin"/>
-  <path d="M878 425 H902 V452 H878" class="thin"/>
-  <path d="M890 420 V457" class="thin"/>
-  <path d="M882 441 L890 430 L898 441" class="thin"/>
-  <circle cx="790" cy="438" r="8" class="open"/>
-  <text x="920" y="450" class="label">Q3</text>
+<text class="ts" x="164" y="180" text-anchor="end" dominant-baseline="central">G1</text>
+<text class="ts" x="164" y="360" text-anchor="end" dominant-baseline="central">G2</text>
+<text class="ts" x="515" y="180" dominant-baseline="central">G4</text>
+<text class="ts" x="515" y="360" dominant-baseline="central">G3</text>
 
-  <!-- Inductor -->
-  <path d="M340 352 H485" class="wire"/>
-  <path d="M485 352
-           c0 -28 40 -28 40 0
-           c0 -28 40 -28 40 0
-           c0 -28 40 -28 40 0
-           c0 -28 40 -28 40 0
-           c0 -28 40 -28 40 0
-           c0 -28 40 -28 40 0
-           H860" class="wire"/>
-  <text x="600" y="310" text-anchor="middle" class="label">L</text>
+<text class="ts" x="292" y="252" text-anchor="middle">Rs 1 mΩ</text>
+<text class="ts" x="370" y="252" text-anchor="middle">L 22 µH</text>
+<text class="ts" x="232" y="296">SW_A</text>
+<text class="ts" x="448" y="296" text-anchor="end">SW_B</text>
 
-  <text x="340" y="630" text-anchor="middle" class="label">Half-Bridge A</text>
-  <text x="860" y="630" text-anchor="middle" class="label">Half-Bridge B</text>
-  <text x="600" y="680" text-anchor="middle" class="small">Two synchronous half bridges connected through a single inductor.</text>
+<text class="ts" x="225" y="492" text-anchor="middle">Half-bridge A (D1, buck side)</text>
+<text class="ts" x="455" y="492" text-anchor="middle">Half-bridge B (D2, boost side)</text>
+
+<line class="ac" x1="150" y1="520" x2="530" y2="520" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text class="act" x="340" y="512" text-anchor="middle">Bidirectional power flow</text>
+<text class="ts" x="340" y="548" text-anchor="middle">fsw 200 kHz · Q1–Q4 BSC070N10NS3G · 24 V / 5 A · 200 W · Vout/Vin = D1/(1−D2)</text>
+</g>
 </svg>
