@@ -327,25 +327,6 @@ Particular attention must be given to:
 
 Standard earth-referenced oscilloscope probe grounds must not be connected directly to floating high-side switching nodes. Differential or properly isolated measurement equipment is required where appropriate.
 
-## Repository Structure
-
-Planned structure:
-
-```text
-bidirectional-buckboost-control/
-├── README.md
-├── firmware/
-├── hardware/
-├── control/
-├── models/
-│   └── parameters/
-├── tools/
-├── tests/
-├── results/
-└── docs/
-    └── images/
-```
-
 ## Status
 
 Early-stage research and architecture definition.
