@@ -6,7 +6,7 @@ Digital power control and research platform for a four-switch non-isolated bidir
 
 The initial hardware platform is an existing converter board with a known-good vendor implementation. The hardware already works, so the interesting problem is not basic bring-up and the goal is not to reproduce the vendor firmware.
 
-This project instead uses the converter as a real physical plant for studying how digital power control should be modeled, implemented, measured, and compared.
+This project instead uses the converter as a real physical plant for studying how digital power control should be modeled, implemented, measured, and compared. Vendor firmware serves only as a known-good reference; new firmware, models, control laws, test infrastructure, and measurements are developed independently.
 
 The project focuses on:
 
@@ -21,23 +21,11 @@ The long-term objective is to turn the converter into a reusable **digital power
 
 ## Design
 
-The project is organized around several design principles.
-
 ### Physical plant first
 
-Controller design starts from the actual converter, including switching topology, component parameters, sensing dynamics, gate-driver behavior, operating regions, and measured waveforms.
+Controller design starts from the actual converter, including switching topology, component parameters, sensing dynamics, gate-driver behavior, operating regions, and measured waveforms. The plant is not treated as an idealized transfer function detached from the hardware, and simulation results are only trusted once they have been checked against measurements:
 
-The plant is not treated as an idealized transfer function detached from the hardware.
-
-### Independent control stack
-
-Vendor firmware is used only as a known-good reference. New firmware, models, control laws, test infrastructure, and measurements are developed independently.
-
-### Model ↔ hardware feedback loop
-
-Simulation and analysis must be checked against real measurements.
-
-```text
+```
 Physical Plant
       ↓
 Measurement
@@ -60,7 +48,7 @@ A model is useful only to the extent that it predicts the behavior of the actual
 
 The control architecture separates sensing, estimation, control law, modulation, and hardware-specific PWM implementation:
 
-```text
+```
 Physical Plant
       ↓
 Sensing / Scaling
@@ -78,71 +66,38 @@ Physical Plant
 
 The intended software structure is conceptually divided into:
 
-```text
-hardware/
-    pwm
-    adc
-    protection
-    timing
-
-plant/
-    measurements
-    operating_regions
-    scaling
-
-control/
-    pi
-    type3
-    state_feedback
-    lqr
-    observer
-    lqg
-    gain_scheduling
-    smc
-    mpc
-
-supervisor/
-    startup
-    mode_selection
-    fault_handling
+```
+hardware/       pwm, adc, protection, timing
+plant/          measurements, operating_regions, scaling
+control/        see Control Research
+supervisor/     startup, mode_selection, fault_handling
 ```
 
-Different controllers should run against the same plant abstraction and be evaluated using the same experimental protocol.
+Different controllers run against the same plant abstraction and are evaluated using the same experimental protocol.
 
 ### Measurement before claims
 
-A controller is not considered successful merely because the converter operates.
-
-Its behavior must be **explainable, measurable, reproducible, and comparable against a defined baseline**.
+A controller is not considered successful merely because the converter operates. Its behavior must be **explainable, measurable, reproducible, and comparable against a defined baseline**.
 
 ## System
 
 The target plant is a four-switch synchronous bidirectional buck-boost converter composed of two synchronous half bridges connected through a single inductor.
 
-<p align="center">
-  <img src="docs/images/four-switch-bidirectional-buck-boost-topology.svg"
-       alt="Four-switch bidirectional buck-boost topology"
-       width="850">
-</p>
+![Four-switch bidirectional buck-boost topology](docs/images/four-switch-bidirectional-buck-boost-topology.svg)
 
-The same power stage supports forward and reverse energy flow. Depending on the voltage relationship between the two ports, the converter can operate in:
-
-- Buck mode
-- Boost mode
-- Mixed Buck-Boost mode
-- Reverse Buck
-- Reverse Boost
-- Bidirectional power-flow operation
+The same power stage supports buck, boost, and mixed buck-boost operation in either power-flow direction.
 
 The reference implementation divides the forward operating range into three regions:
 
-- `Vout < 0.8 × Vin` → Buck mode
-- `0.8 × Vin ≤ Vout ≤ 1.2 × Vin` → Mixed Buck-Boost mode
-- `Vout > 1.2 × Vin` → Boost mode
+| Region | Mode |
+| --- | --- |
+| `Vout < 0.8 × Vin` | Buck |
+| `0.8 × Vin ≤ Vout ≤ 1.2 × Vin` | Mixed buck-boost |
+| `Vout > 1.2 × Vin` | Boost |
 
-In the reference mixed-mode strategy, the Buck-side duty ratio is fixed near `D1 = 0.8`, while the Boost-side duty ratio `D2` is varied. The ideal conversion relationship is:
+In the reference mixed-mode strategy, the buck-side duty ratio is fixed near `D1 = 0.8` while the boost-side duty ratio `D2` is varied. The ideal conversion relationship is:
 
-```text
+```
 Vout / Vin = D1 / (1 - D2)
 ```
 
@@ -153,22 +108,22 @@ This behavior is retained as a reference baseline, but later controllers are not
 The initial physical platform has the following nominal characteristics:
 
 | Parameter | Value |
-|---|---:|
+| --- | --- |
 | Topology | Four-switch non-isolated bidirectional buck-boost |
 | Input voltage | 12–48 VDC |
 | Output voltage | 5–48 VDC |
 | Rated output | 24 V / 5 A |
 | Maximum power | 200 W |
 | Switching frequency | 200 kHz |
-| Main inductor | 22 µH |
+| Main inductor | 22 µH, ±20 %, DCR 20.5 mΩ typ |
 | Bulk capacitance | 2 × 220 µF per power port |
 | Current shunt | 1 mΩ |
-| Main MOSFET | BSC070N10NS3G |
+| Main MOSFET | BSC070N10NS3G, 100 V, 6.3 mΩ typ, Qg 42 nC |
 | Gate driver | Si8233BD-D-IS |
 | Signal-conditioning op amp | GS8552 |
 | Initial control MCU | STM32F334 |
 
-The MCU is an implementation target, not the architectural identity of the project.
+The MCU is an implementation target, not the architectural identity of the project. These values will evolve into a machine-readable plant parameter database shared by simulation, analysis tools, and firmware.
 
 ## Measurement Model
 
@@ -176,7 +131,7 @@ The MCU is an implementation target, not the architectural identity of the proje
 
 The voltage-sensing path has an approximate gain of:
 
-```text
+```
 Kv = 3.3 kΩ / 68 kΩ ≈ 0.049
 ```
 
@@ -184,15 +139,9 @@ which maps an ADC full-scale input to approximately 68 V at the power port.
 
 ### Bidirectional current sensing
 
-The current measurement uses a 1 mΩ shunt and a differential amplifier with approximately:
+The current measurement uses the 1 mΩ shunt and a differential amplifier with approximately `Ki = 0.15 V/A`. A 1.65 V offset allows bidirectional measurement using a unipolar ADC:
 
-```text
-Ki = 0.15 V/A
 ```
-
-A 1.65 V offset allows bidirectional current measurement using a unipolar ADC:
-
-```text
 Vadc = 1.65 + 0.15 × I
 I    = (Vadc - 1.65) / 0.15
 ```
@@ -201,75 +150,39 @@ The analog signal-conditioning and RC filtering stages are part of the effective
 
 ## Reference Baseline
 
-The original development platform already operates with vendor firmware. That implementation is used only as a **reference system**.
+The original development platform already operates with vendor firmware, which is used only as a reference system. Existing reference material also includes open-loop and compensated simulations for buck, boost, and mixed buck-boost operation.
 
 Reference characterization includes:
 
-- complementary PWM timing;
-- effective dead time;
-- Buck switching behavior;
-- Boost switching behavior;
-- mixed-mode switching behavior;
-- inductor-current ripple;
-- output-voltage ripple;
-- load-step response;
-- soft-start behavior;
+- complementary PWM timing and effective dead time;
+- buck, boost, and mixed-mode switching behavior;
+- inductor-current ripple and output-voltage ripple;
+- load-step response and soft-start behavior;
 - bidirectional current polarity;
 - short-circuit shutdown and restart behavior.
-
-Reference simulation material also exists for:
-
-- Buck open loop
-- Boost open loop
-- Buck-Boost open loop
-- Buck PID control
-- Buck Type-III compensation
-- Boost PID control
-- Boost Type-III compensation
 
 Vendor firmware, schematics, simulation files, datasheets, and documentation are **not redistributed** by this repository.
 
 ## Control Research
 
-A central objective of this project is to compare multiple control paradigms on the same physical plant.
+A central objective is to compare multiple control paradigms on the same physical plant.
 
-### Classical control
+**Classical control** — PI / PID, cascaded current and voltage loops, Type-III digital compensation, feedforward control.
 
-- PI / PID
-- Cascaded current and voltage loops
-- Type-III digital compensation
-- Feedforward control
+**State-space control** — state-space modeling, controllability / observability analysis, full-state feedback, pole placement, state observers.
 
-### State-space control
+**Optimal and estimation-based control** — LQR, Luenberger observer, Kalman state estimation, LQG.
 
-- State-space modeling
-- Controllability / observability analysis
-- Full-state feedback
-- Pole placement
-- State observers
+**Nonlinear and advanced control** — gain scheduling, sliding-mode control, MPC, robustness and uncertainty analysis.
 
-### Optimal and estimation-based control
-
-- Linear Quadratic Regulator (LQR)
-- Luenberger observer
-- Kalman state estimation
-- Linear Quadratic Gaussian control (LQG)
-
-### Nonlinear and advanced control
-
-- Gain scheduling
-- Sliding-mode control
-- Model Predictive Control (MPC)
-- Robustness and uncertainty analysis
-
-**The intention is not to implement algorithms simply because they are available. Each controller must be evaluated against a common experimental protocol.**
+**Control methods are included only when they can be evaluated against the same physical plant and experimental protocol.**
 
 ## Controller Benchmark
 
-Controllers should be compared using common engineering metrics:
+Controllers are compared using common engineering metrics:
 
 | Metric | Description |
-|---|---|
+| --- | --- |
 | Rise time | Reference-step response |
 | Overshoot / undershoot | Maximum voltage deviation |
 | Settling time | Recovery time |
@@ -285,41 +198,14 @@ Controllers should be compared using common engineering metrics:
 
 The objective is to expose engineering trade-offs rather than declare a single universally superior controller.
 
-## Physical Plant Parameters
-
-Initial nominal values include:
-
-```text
-L           = 22 µH
-L tolerance = ±20 %
-DCR_typ     = 20.5 mΩ
-
-Cbulk       = 2 × 220 µF
-
-Rshunt      = 1 mΩ
-
-MOSFET      = BSC070N10NS3G
-VDS_max     = 100 V
-RDS(on)_typ = 6.3 mΩ
-Qg_typ      = 42 nC
-
-fsw         = 200 kHz
-```
-
-These values will evolve into a machine-readable plant parameter database shared by simulation, analysis tools, and firmware.
-
 ## Safety
 
-This repository controls a switching power converter capable of significant voltage, current, and stored energy.
-
-Incorrect PWM polarity, timing, dead time, mode transition, or protection behavior can destroy power devices and connected equipment.
+This repository controls a switching power converter capable of significant voltage, current, and stored energy. Incorrect PWM polarity, timing, dead time, mode transition, or protection behavior can destroy power devices and connected equipment.
 
 Particular attention must be given to:
 
-- shoot-through prevention;
-- effective dead-time validation;
-- current limiting;
-- overvoltage protection;
+- shoot-through prevention and effective dead-time validation;
+- current limiting and overvoltage protection;
 - safe startup and shutdown;
 - reverse energy flow;
 - hardware fault shutdown;
@@ -329,9 +215,7 @@ Standard earth-referenced oscilloscope probe grounds must not be connected direc
 
 ## Status
 
-Early-stage research and architecture definition.
-
-Current focus: **reference-system and physical-plant characterization**.
+Early-stage research and architecture definition. Current focus: **reference-system and physical-plant characterization**.
 
 ## License
 
