@@ -2,24 +2,118 @@
 
 Digital power control and research platform for a four-switch non-isolated bidirectional buck-boost converter, covering classical and modern control methods.
 
-## Overview
+## Why This Project
 
-This project develops an independent digital control stack for a four-switch synchronous bidirectional buck-boost converter.
+The initial hardware platform is an existing converter board with a known-good vendor implementation. The hardware already works, so the interesting problem is not basic bring-up and the goal is not to reproduce the vendor firmware.
 
-The initial hardware platform is an existing converter board with a known-good vendor implementation. The hardware is therefore treated as a validated physical plant and reference system rather than as a new hardware bring-up project.
+This project instead uses the converter as a real physical plant for studying how digital power control should be modeled, implemented, measured, and compared.
 
-**The goal is not to reproduce the vendor firmware.**
-
-Instead, this repository focuses on:
+The project focuses on:
 
 - reconstructing the physical plant and control interfaces;
 - establishing reproducible reference measurements;
-- developing an independent firmware architecture;
+- developing an independent control implementation;
 - validating analytical and simulation models against real hardware;
-- implementing classical and modern control methods;
+- implementing classical and modern control methods on the same plant;
 - comparing controllers under identical operating conditions.
 
-The long-term objective is to turn the converter into a reusable **digital power control research platform**.
+The long-term objective is to turn the converter into a reusable **digital power control research platform** where control ideas are tested against real switching hardware rather than evaluated only in simulation.
+
+## Design
+
+The project is organized around several design principles.
+
+### Physical plant first
+
+Controller design starts from the actual converter, including switching topology, component parameters, sensing dynamics, gate-driver behavior, operating regions, and measured waveforms.
+
+The plant is not treated as an idealized transfer function detached from the hardware.
+
+### Independent control stack
+
+Vendor firmware is used only as a known-good reference. New firmware, models, control laws, test infrastructure, and measurements are developed independently.
+
+### Model ↔ hardware feedback loop
+
+Simulation and analysis must be checked against real measurements.
+
+```text
+Physical Plant
+      ↓
+Measurement
+      ↓
+Model Identification / Validation
+      ↓
+Controller Design
+      ↓
+Implementation
+      ↓
+Hardware Test
+      ↓
+Model Update
+      ↺
+```
+
+A model is useful only to the extent that it predicts the behavior of the actual converter closely enough to support control design.
+
+### Control algorithms are interchangeable, experiments are not
+
+The control architecture separates sensing, estimation, control law, modulation, and hardware-specific PWM implementation:
+
+```text
+Physical Plant
+      ↓
+Sensing / Scaling
+      ↓
+State Estimation
+      ↓
+Control Law
+      ↓
+Modulation
+      ↓
+PWM / Gate Driver
+      ↓
+Physical Plant
+```
+
+The intended software structure is conceptually divided into:
+
+```text
+hardware/
+    pwm
+    adc
+    protection
+    timing
+
+plant/
+    measurements
+    operating_regions
+    scaling
+
+control/
+    pi
+    type3
+    state_feedback
+    lqr
+    observer
+    lqg
+    gain_scheduling
+    smc
+    mpc
+
+supervisor/
+    startup
+    mode_selection
+    fault_handling
+```
+
+Different controllers should run against the same plant abstraction and be evaluated using the same experimental protocol.
+
+### Measurement before claims
+
+A controller is not considered successful merely because the converter operates.
+
+Its behavior must be **explainable, measurable, reproducible, and comparable against a defined baseline**.
 
 ## System
 
@@ -104,57 +198,6 @@ I    = (Vadc - 1.65) / 0.15
 ```
 
 The analog signal-conditioning and RC filtering stages are part of the effective measurement plant and will be characterized rather than treated as ideal sensors.
-
-## Control Architecture
-
-The project separates the physical plant, measurement path, estimation, control law, modulation, and hardware-specific PWM implementation.
-
-```text
-Physical Plant
-      ↓
-Sensing / Scaling
-      ↓
-State Estimation
-      ↓
-Control Law
-      ↓
-Modulation
-      ↓
-PWM / Gate Driver
-      ↓
-Physical Plant
-```
-
-The intended software structure is conceptually divided into:
-
-```text
-hardware/
-    pwm
-    adc
-    protection
-    timing
-
-plant/
-    measurements
-    operating_regions
-    scaling
-
-control/
-    pi
-    type3
-    state_feedback
-    lqr
-    observer
-    lqg
-    gain_scheduling
-    smc
-    mpc
-
-supervisor/
-    startup
-    mode_selection
-    fault_handling
-```
 
 ## Reference Baseline
 
@@ -302,29 +345,6 @@ bidirectional-buckboost-control/
 └── docs/
     └── images/
 ```
-
-## Engineering Loop
-
-```text
-Understand the physical plant
-        ↓
-Build the model
-        ↓
-Validate the model
-        ↓
-Design the controller
-        ↓
-Implement it
-        ↓
-Measure the real system
-        ↓
-Compare prediction and measurement
-        ↓
-Update the model
-        ↺
-```
-
-**A controller is not considered successful merely because the converter operates. It must be explainable, measurable, reproducible, and comparable against a defined baseline.**
 
 ## Status
 
