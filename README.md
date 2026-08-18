@@ -221,97 +221,6 @@ A central objective of this project is to compare multiple control paradigms on 
 
 **The intention is not to implement algorithms simply because they are available. Each controller must be evaluated against a common experimental protocol.**
 
-## Development Gates
-
-### Gate 0 — Reference-System and Physical-Plant Characterization
-
-Reconstruct and validate:
-
-- topology and switching states;
-- plant parameters;
-- sensing gains and offsets;
-- PWM and gate-driver timing;
-- operating-region behavior;
-- baseline transient and protection behavior.
-
-### Gate 1 — Independent Firmware Baseline
-
-Reimplement the fundamental converter operation using independently developed firmware and reproduce the reference Buck, Boost, mixed-mode, and bidirectional behavior.
-
-### Gate 2 — Unified Bidirectional Control Architecture
-
-Build a common control and supervisory architecture for:
-
-- forward and reverse power flow;
-- Buck, mixed, and Boost regions;
-- startup and shutdown;
-- protection;
-- mode transitions.
-
-### Gate 3 — Classical Control Baseline
-
-Implement and characterize:
-
-- voltage PI/PID;
-- current control;
-- cascaded loops;
-- Type-III compensation;
-- feedforward.
-
-### Gate 4 — Plant Modeling and Identification
-
-Develop and validate:
-
-- averaged models;
-- small-signal models;
-- state-space models;
-- operating-point models;
-- model-to-hardware correlation.
-
-### Gate 5 — State Feedback
-
-Full-state feedback and pole-placement control.
-
-### Gate 6 — LQR
-
-Quadratic optimal control with explicit state and control-effort weighting.
-
-### Gate 7 — Observer-Based Control
-
-State reconstruction using a Luenberger observer.
-
-### Gate 8 — LQG
-
-Kalman state estimation combined with LQR.
-
-### Gate 9 — Gain-Scheduled Control
-
-Controller scheduling across Buck, mixed, and Boost operating regions.
-
-### Gate 10 — Nonlinear / Sliding-Mode Control
-
-Evaluate nonlinear control and robustness against plant variation and disturbances.
-
-### Gate 11 — Model Predictive Control
-
-Constraint-aware predictive control considering limits such as inductor current, duty ratio, output voltage, and switching behavior.
-
-### Gate 12 — Robustness and Uncertainty
-
-Evaluate controller sensitivity to:
-
-- inductor tolerance and saturation;
-- capacitor and ESR variation;
-- input-voltage range;
-- load range;
-- temperature;
-- measurement noise;
-- model mismatch.
-
-### Gate 13 — Unified Controller Benchmark
-
-Compare all applicable controllers under the same experimental protocol.
-
 ## Controller Benchmark
 
 Controllers should be compared using common engineering metrics:
@@ -421,7 +330,7 @@ Update the model
 
 Early-stage research and architecture definition.
 
-Current focus: **Gate 0 — Reference-System and Physical-Plant Characterization**.
+Current focus: **reference-system and physical-plant characterization**.
 
 ## License
 
