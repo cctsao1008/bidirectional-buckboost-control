@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Four-Switch Bidirectional Buck-Boost Topology</title>
+  <desc id="desc">Two synchronous half bridges connected through a single inductor, with Q1 and Q2 on the left and Q4 and Q3 on the right.</desc>
+  <style>
+    .wire { stroke:#111; stroke-width:4; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+    .thin { stroke:#111; stroke-width:3; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+    .node { fill:#111; }
+    .open { fill:#fff; stroke:#111; stroke-width:4; }
+    .label { font-family:Arial,Helvetica,sans-serif; fill:#111; font-size:30px; }
+    .small { font-family:Arial,Helvetica,sans-serif; fill:#333; font-size:24px; }
+    .title { font-family:Arial,Helvetica,sans-serif; fill:#111; font-size:44px; font-weight:700; }
+  </style>
+
+  <text x="600" y="62" text-anchor="middle" class="title">Four-Switch Bidirectional Buck-Boost Topology</text>
+
+  <!-- Port rails -->
+  <circle cx="90" cy="150" r="10" class="open"/>
+  <circle cx="1110" cy="150" r="10" class="open"/>
+  <circle cx="90" cy="565" r="10" class="open"/>
+  <circle cx="1110" cy="565" r="10" class="open"/>
+  <path d="M90 565 H1110" class="wire"/>
+  <path d="M90 150 H340" class="wire"/>
+  <path d="M860 150 H1110" class="wire"/>
+
+  <text x="55" y="132" class="label">+</text>
+  <text x="55" y="385" class="label">Vin</text>
+  <text x="1030" y="385" class="label">Vout</text>
+  <text x="44" y="610" class="label">GND</text>
+  <text x="1030" y="610" class="label">GND</text>
+  <text x="1090" y="132" class="label">+</text>
+
+  <!-- Left half bridge vertical path -->
+  <path d="M340 150 V220" class="wire"/>
+  <path d="M340 315 V390" class="wire"/>
+  <path d="M340 485 V565" class="wire"/>
+  <circle cx="340" cy="352" r="7" class="node"/>
+
+  <!-- Right half bridge vertical path -->
+  <path d="M860 150 V220" class="wire"/>
+  <path d="M860 315 V390" class="wire"/>
+  <path d="M860 485 V565" class="wire"/>
+  <circle cx="860" cy="352" r="7" class="node"/>
+
+  <!-- Simplified MOSFET Q1 -->
+  <path d="M322 220 V315 M358 220 V315" class="thin"/>
+  <path d="M340 220 V240 M340 295 V315" class="wire"/>
+  <path d="M270 268 H312" class="thin"/>
+  <path d="M312 240 V296" class="thin"/>
+  <path d="M358 255 H382 V282 H358" class="thin"/>
+  <path d="M370 250 V287" class="thin"/>
+  <path d="M362 271 L370 260 L378 271" class="thin"/>
+  <circle cx="270" cy="268" r="8" class="open"/>
+  <text x="400" y="280" class="label">Q1</text>
+
+  <!-- Simplified MOSFET Q2 -->
+  <path d="M322 390 V485 M358 390 V485" class="thin"/>
+  <path d="M340 390 V410 M340 465 V485" class="wire"/>
+  <path d="M270 438 H312" class="thin"/>
+  <path d="M312 410 V466" class="thin"/>
+  <path d="M358 425 H382 V452 H358" class="thin"/>
+  <path d="M370 420 V457" class="thin"/>
+  <path d="M362 441 L370 430 L378 441" class="thin"/>
+  <circle cx="270" cy="438" r="8" class="open"/>
+  <text x="400" y="450" class="label">Q2</text>
+
+  <!-- Simplified MOSFET Q4 -->
+  <path d="M842 220 V315 M878 220 V315" class="thin"/>
+  <path d="M860 220 V240 M860 295 V315" class="wire"/>
+  <path d="M790 268 H832" class="thin"/>
+  <path d="M832 240 V296" class="thin"/>
+  <path d="M878 255 H902 V282 H878" class="thin"/>
+  <path d="M890 250 V287" class="thin"/>
+  <path d="M882 271 L890 260 L898 271" class="thin"/>
+  <circle cx="790" cy="268" r="8" class="open"/>
+  <text x="920" y="280" class="label">Q4</text>
+
+  <!-- Simplified MOSFET Q3 -->
+  <path d="M842 390 V485 M878 390 V485" class="thin"/>
+  <path d="M860 390 V410 M860 465 V485" class="wire"/>
+  <path d="M790 438 H832" class="thin"/>
+  <path d="M832 410 V466" class="thin"/>
+  <path d="M878 425 H902 V452 H878" class="thin"/>
+  <path d="M890 420 V457" class="thin"/>
+  <path d="M882 441 L890 430 L898 441" class="thin"/>
+  <circle cx="790" cy="438" r="8" class="open"/>
+  <text x="920" y="450" class="label">Q3</text>
+
+  <!-- Inductor -->
+  <path d="M340 352 H485" class="wire"/>
+  <path d="M485 352
+           c0 -28 40 -28 40 0
+           c0 -28 40 -28 40 0
+           c0 -28 40 -28 40 0
+           c0 -28 40 -28 40 0
+           c0 -28 40 -28 40 0
+           c0 -28 40 -28 40 0
+           H860" class="wire"/>
+  <text x="600" y="310" text-anchor="middle" class="label">L</text>
+
+  <text x="340" y="630" text-anchor="middle" class="label">Half-Bridge A</text>
+  <text x="860" y="630" text-anchor="middle" class="label">Half-Bridge B</text>
+  <text x="600" y="680" text-anchor="middle" class="small">Two synchronous half bridges connected through a single inductor.</text>
+</svg>
