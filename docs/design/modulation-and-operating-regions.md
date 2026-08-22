@@ -10,8 +10,10 @@ The initial implementation follows the behavior of the known-good reference syst
 
 The converter consists of two synchronous half bridges connected by a single inductor:
 
-- Half-bridge A: Q1 / Q2, duty variable `D1`
-- Half-bridge B: Q4 / Q3, duty variable `D2`
+- Left half-bridge: Q1 high-side / Q4 low-side, associated with duty variable `D1`
+- Right half-bridge: Q2 high-side / Q3 low-side, associated with duty variable `D2`
+
+This mapping follows the V1.2 schematic and MCU PWM routing.
 
 The same hardware supports energy flow in either direction. Forward and reverse operation should therefore be expressed through a common power-flow abstraction rather than duplicated controller implementations.
 
@@ -21,9 +23,9 @@ The reference implementation divides the forward operating range into three regi
 
 | Condition | Region | Primary action |
 | --- | --- | --- |
-| `Vout < 0.8 × Vin` | Buck | Half-bridge A modulates; half-bridge B is held near the non-switching state required by the driver/bootstrap implementation |
+| `Vout < 0.8 × Vin` | Buck | Left half-bridge modulates; right half-bridge is held near the pass-through/non-switching state required by the hardware implementation |
 | `0.8 × Vin ≤ Vout ≤ 1.2 × Vin` | Mixed buck-boost | Both half bridges participate |
-| `Vout > 1.2 × Vin` | Boost | Half-bridge B modulates; half-bridge A is held near the corresponding non-switching state |
+| `Vout > 1.2 × Vin` | Boost | Right half-bridge modulates; left half-bridge is held near the corresponding pass-through/non-switching state |
 
 The `0.8` and `1.2` boundaries are reference-system values, not universal converter constants. They should remain explicit configuration parameters so that later experiments can evaluate different transition regions.
 
@@ -54,7 +56,7 @@ Conceptually:
 ```text
 Controller
     ↓
-Normalized control command
+Normalized or physical control request
     ↓
 Operating-region scheduler
     ↓
@@ -72,11 +74,27 @@ power_flow_direction
 operating_region
 D1
 D2
-enable_leg_A
-enable_leg_B
+enable_left_leg
+enable_right_leg
 ```
 
 The exact firmware API is intentionally deferred until the first independent implementation is exercised on hardware.
+
+## Physical Duty Constraints
+
+The modulation layer must enforce hardware-realizable PWM commands, not only ideal duty equations.
+
+Constraints include:
+
+- minimum and maximum duty ratio;
+- minimum pulse width;
+- effective dead time;
+- bootstrap-refresh requirements;
+- bounded duty slew during mode transitions;
+- safe complementary-output states;
+- protection authority over all controller requests.
+
+A mathematically valid `(D1, D2)` pair is not automatically a safe or realizable gate command.
 
 ## Transition Design
 
@@ -101,6 +119,26 @@ The transition logic should therefore provide:
 
 The final transition policy will be based on measured behavior rather than assumed from the ideal topology alone.
 
+## Inductor-Voltage-Oriented Control Allocation
+
+Later control methods may command a desired average inductor voltage rather than directly commanding a region-specific duty ratio.
+
+For the ideal averaged model:
+
+```text
+vL = D1 * Vin - (1 - D2) * Vout
+```
+
+A controller may therefore request `vL*`, while the modulation layer chooses a realizable `(D1, D2)` pair that satisfies:
+
+```text
+D1 * Vin - (1 - D2) * Vout ≈ vL*
+```
+
+This separates the control-law objective from the implementation-specific choice of Buck, Mixed, or Boost duty allocation.
+
+The remaining degree of freedom may later be used to reduce switching activity, conduction loss, duty discontinuity, or bootstrap stress, subject to measured hardware constraints.
+
 ## Bidirectional Operation
 
 Forward and reverse power flow should share the same conceptual structure:
@@ -110,7 +148,7 @@ requested power-flow direction
         ↓
 voltage relationship between the two ports
         ↓
-operating region
+operating region / control allocation
         ↓
 duty allocation
         ↓
@@ -119,16 +157,18 @@ PWM state
 
 The implementation should avoid encoding `input` and `output` as permanent hardware identities wherever the underlying quantity is physically a bidirectional port variable.
 
-This distinction becomes important for later state-space, LQR, LQG, gain-scheduled, and MPC implementations.
+This distinction becomes important for later state-space, LQI, observer-based, sliding-mode, predictive, and MPC implementations.
 
 ## Design Rules
 
-1. Region boundaries are configuration parameters, not hidden constants.
-2. Control algorithms do not write PWM registers directly.
-3. Duty commands are bounded before reaching the hardware layer.
-4. Region transitions are observable and testable events.
-5. The reference modulation strategy is a baseline, not the final architecture.
-6. Any new modulation strategy must be evaluated under the same measurement protocol as the baseline.
+1. Physical bridge mapping follows the V1.2 schematic: Q1/Q4 left, Q2/Q3 right.
+2. Region boundaries are configuration parameters, not hidden constants.
+3. Control algorithms do not write PWM registers directly.
+4. Duty commands are bounded before reaching the hardware layer.
+5. Region transitions are observable and testable events.
+6. Bootstrap and minimum-pulse constraints belong to modulation, not individual controllers.
+7. The reference modulation strategy is a baseline, not the final architecture.
+8. Any new modulation strategy must be evaluated under the same measurement protocol as the baseline.
 
 ## Validation Targets
 
@@ -137,7 +177,7 @@ The operating-region implementation should eventually be validated using:
 - `D1` / `D2` command traces;
 - both switching-node waveforms;
 - effective gate timing;
-- inductor current;
+- reconstructed or externally observed inductor-current behavior during development;
 - output voltage;
 - transition overshoot / undershoot;
 - transition current stress;
