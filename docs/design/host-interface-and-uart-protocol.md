@@ -24,23 +24,23 @@ The converter must remain locally deterministic. Voltage/current control, modula
 
 ## Design Principles
 
-1. The host sends **supervisory commands**, not switching commands.
+1. The host sends supervisory commands, not switching commands.
 2. The host must never directly command individual MOSFET states or per-cycle duty ratios during normal operation.
 3. Every write command is validated by the firmware before it affects the power stage.
 4. Safety and fault handling remain authoritative on the converter.
 5. The wire protocol is binary, versioned, deterministic, and independent of the Web UI implementation.
-6. Engineering values are transferred as fixed-point integers rather than protocol-level floating-point values.
-7. The same protocol should be reusable by a future Python CLI, automated test tool, or other host application.
+6. COBS provides framing and rapid stream resynchronization; CRC16 provides data-integrity checking.
+7. Engineering values are transferred as fixed-point integers rather than protocol-level floating-point values.
+8. The same protocol should be reusable by future Web, CLI, test, or analysis clients.
 
 ## Physical Interface
 
 The current hardware exposes STM32F334 USART1 through the existing UART header.
 
-Initial protocol settings:
-
 | Parameter | Value |
 | --- | --- |
 | Interface | USART1 |
+| MCU pins | PB6 TX / PB7 RX |
 | Format | 8 data bits, no parity, 1 stop bit |
 | Initial baud rate | 115200 bit/s |
 | Flow control | None |
@@ -68,34 +68,78 @@ Power Manager / Telemetry Provider
 
 The UI must not directly read from or write to the serial port. UI components interact only with the Device API.
 
-## Frame Format
+## Wire Framing
 
-Protocol version 1 uses the following frame:
+Protocol version 1 uses a binary raw frame, followed by CRC16, COBS encoding, and a `0x00` delimiter.
 
 ```text
-+--------+--------+---------+------+-----+-------+--------+---------+-------+
-| SOF0   | SOF1   | VERSION | TYPE | CMD | SEQ   | LENGTH | PAYLOAD | CRC16 |
-| 1 byte | 1 byte | 1 byte  | 1 B  | 1 B | 2 B   | 2 B    | N bytes | 2 B   |
-+--------+--------+---------+------+-----+-------+--------+---------+-------+
+Raw frame
+──────────────────────────────────────────────
+VERSION | TYPE | CMD | FLAGS | SEQ | LENGTH
+PAYLOAD
+CRC16
+──────────────────────────────────────────────
+                  ↓
+                 COBS
+                  ↓
+encoded bytes ... 0x00
+                  ^ frame delimiter
+```
+
+The raw packet layout is:
+
+```text
++---------+------+-----+-------+--------+--------+---------+-------+
+| VERSION | TYPE | CMD | FLAGS | SEQ    | LENGTH | PAYLOAD | CRC16 |
+| 1 byte  | 1 B  | 1 B | 1 B   | 2 B    | 2 B    | N bytes | 2 B   |
++---------+------+-----+-------+--------+--------+---------+-------+
 ```
 
 ### Fields
 
 | Field | Size | Description |
 | --- | ---: | --- |
-| `SOF0` | 1 | `0xAA` |
-| `SOF1` | 1 | `0x55` |
-| `VERSION` | 1 | Protocol version, initially `0x01` |
+| `VERSION` | 1 | Protocol major version, initially `0x01` |
 | `TYPE` | 1 | Message type |
 | `CMD` | 1 | Command identifier |
+| `FLAGS` | 1 | Reserved for command/transport flags; initially zero |
 | `SEQ` | 2 | Host-generated sequence number |
 | `LENGTH` | 2 | Payload length in bytes |
 | `PAYLOAD` | N | Command-specific payload |
 | `CRC16` | 2 | CRC-16/CCITT-FALSE over `VERSION` through end of payload |
 
-All multi-byte integer fields use **little-endian** byte order.
+All multi-byte integer fields use little-endian byte order.
 
-Version-1 maximum payload length is `240` bytes. Larger data objects must be transferred using future chunked-transfer commands rather than oversized frames.
+Version-1 maximum payload length is `240` bytes. Larger objects must use future chunked-transfer commands rather than oversized frames.
+
+### COBS framing
+
+The complete raw frame, including CRC16, is COBS encoded. A single `0x00` byte terminates every encoded frame.
+
+Properties important to this project:
+
+- encoded frame data never contains `0x00`;
+- one delimiter unambiguously marks a frame boundary;
+- a damaged frame can be discarded without scanning for multi-byte SOF patterns;
+- the next `0x00` delimiter provides a deterministic resynchronization point;
+- framing overhead is bounded and small.
+
+COBS does not provide corruption detection. CRC16 remains mandatory.
+
+### CRC
+
+Protocol version 1 uses CRC-16/CCITT-FALSE:
+
+```text
+Polynomial : 0x1021
+Init       : 0xFFFF
+RefIn      : false
+RefOut     : false
+XorOut     : 0x0000
+Check      : 0x29B1 for "123456789"
+```
+
+CRC is calculated over the raw frame from `VERSION` through the last payload byte, before COBS encoding.
 
 ## Message Types
 
@@ -125,8 +169,6 @@ Every response payload begins with one status byte.
 
 ## V0.1 Commands
 
-### Command Summary
-
 | ID | Command | Direction | Purpose |
 | ---: | --- | --- | --- |
 | `0x01` | `PING` | R/W | Verify link and protocol parser |
@@ -147,8 +189,6 @@ Response payload after status:
 ```text
 uint32_t uptime_ms
 ```
-
-The host uses `PING` during initial connection and link diagnostics.
 
 ### `GET_INFO` — `0x02`
 
@@ -191,9 +231,9 @@ uint16_t duty_a_q15
 uint16_t duty_b_q15
 ```
 
-The Web UI may derive quantities such as input power, output power, and efficiency from these primary measurements.
+The Web UI may derive input power, output power, and efficiency from these primary measurements.
 
-Current values are signed to preserve future bidirectional power-flow semantics.
+Current values are signed to preserve bidirectional power-flow semantics.
 
 Duty values use unsigned Q15 scaling:
 
@@ -232,7 +272,7 @@ Request payload: empty.
 
 Response payload: status only.
 
-This command is a **request to start**, not a direct PWM-enable operation. The Power Manager remains responsible for qualification, soft-start, fault checks, and state transitions.
+This command is a request to start, not a direct PWM-enable operation. The Power Manager remains responsible for qualification, soft-start, fault checks, and state transitions.
 
 ### `OUTPUT_DISABLE` — `0x13`
 
@@ -282,11 +322,9 @@ Initial `controller_type` values:
 | `4` | `LQI` |
 | `5` | `MPC` |
 
-The protocol reserves controller identifiers early so the Web UI and firmware can evolve without redesigning the transport.
+These identifiers reserve protocol space; they do not imply that all controllers are already implemented or validated.
 
 ## Units and Scaling
-
-Protocol fields use explicit engineering-unit scaling.
 
 | Quantity | Wire representation |
 | --- | --- |
@@ -302,33 +340,61 @@ Floating-point values are not transferred in V0.1.
 
 The host increments `SEQ` for each request. The MCU copies the request sequence number into the corresponding response.
 
-The host uses sequence numbers to:
-
-- match responses to commands;
-- reject stale responses;
-- diagnose timeouts;
-- support future asynchronous telemetry without ambiguity.
-
 The MCU does not need to process multiple outstanding V0.1 requests concurrently. The initial Web client should use one outstanding request at a time.
 
-## Parser Requirements
+## Firmware Receive Path
 
-The firmware parser must:
+The initial firmware path is:
 
-1. search for `0xAA 0x55` synchronization bytes;
-2. reject unsupported protocol versions;
-3. reject payload lengths larger than the configured maximum;
-4. wait for the complete frame;
-5. validate CRC before dispatch;
-6. discard a corrupted frame without changing converter control state;
-7. resynchronize on the next valid SOF sequence;
-8. never execute a partially received command.
+```text
+USART RX interrupt
+      ↓
+byte ring buffer
+      ↓
+background protocol service
+      ↓
+collect bytes until 0x00
+      ↓
+COBS decode
+      ↓
+length / version checks
+      ↓
+CRC16 check
+      ↓
+command dispatch
+```
 
-Parsing and command handling must not execute inside the 200 kHz real-time control path.
+The USART ISR only moves bytes into the ring buffer. COBS decoding, CRC validation, command execution, and response creation must not run in the interrupt handler or in the 200 kHz control path.
+
+### Stream parser requirements
+
+The parser must:
+
+1. treat `0x00` as the only frame delimiter;
+2. discard empty frames;
+3. drop an overlength encoded frame until the next delimiter;
+4. COBS-decode only complete delimited frames;
+5. reject unsupported protocol versions;
+6. reject payload lengths larger than the configured maximum;
+7. validate CRC before command dispatch;
+8. discard corrupted frames without changing converter state;
+9. never execute a partially received command;
+10. resynchronize at the next delimiter after framing damage.
+
+Protocol diagnostics should track at least:
+
+```text
+valid_frames
+cobs_errors
+crc_errors
+length_errors
+version_errors
+rx_overflows
+```
 
 ## Safety Boundary
 
-The UART protocol is intentionally outside the real-time safety boundary.
+The UART protocol is outside the real-time safety boundary.
 
 ```text
 Host command
@@ -344,21 +410,19 @@ Real-time control loop
 Modulation / PWM
 ```
 
-The following operations are prohibited through the normal host protocol:
+The normal host protocol must not provide:
 
-- direct Q1/Q2/Q3/Q4 switching commands;
+- direct individual MOSFET switching commands;
 - host-timed PWM generation;
-- disabling mandatory overcurrent or overvoltage protection;
-- bypassing soft-start and power-stage qualification;
-- commanding values outside firmware-enforced limits.
+- commands that bypass mandatory overcurrent or overvoltage protection;
+- commands that bypass soft-start and power-stage qualification;
+- references outside firmware-enforced limits.
 
-Communication loss must never disable local hardware or firmware protection.
+Communication loss must never disable local protection.
 
-The policy for whether an already-running converter continues at its last valid reference or shuts down after host loss is intentionally left configurable and will be defined when remote-session behavior is implemented.
+The later remote-session design may support both autonomous operation and a remote-armed mode with controlled shutdown on heartbeat loss.
 
 ## Web Client V0.1 Transaction Model
-
-Initial connection sequence:
 
 ```text
 User clicks Connect
@@ -376,24 +440,22 @@ GET_STATUS
 Dashboard ready
 ```
 
-Normal dashboard operation initially polls `GET_STATUS` at a modest rate such as 10–20 Hz. This is sufficient for bring-up and avoids adding unsolicited telemetry before transport behavior is verified.
+Normal dashboard operation initially polls `GET_STATUS` at approximately 10–20 Hz. This is sufficient for bring-up and keeps unsolicited traffic out of the first transport implementation.
 
-The later Scope implementation may enable a higher-rate telemetry mode or buffered capture mechanism.
+High-rate transient measurements must later use MCU-timestamped buffered capture rather than browser timing.
 
 ## Planned Extensions
 
-The following features are deliberately outside V0.1 but supported by the protocol architecture:
-
 - periodic telemetry streaming;
-- controller selection and tuning parameters;
+- capability discovery;
+- controller selection and atomic tuning-parameter updates;
 - programmable voltage/current sequences;
 - deterministic profile execution on the MCU;
-- waveform capture and chunked data transfer;
+- MCU-timestamped waveform capture and chunked data transfer;
 - calibration read/write;
 - fault-history retrieval;
-- capability discovery;
-- firmware-update handoff;
-- remote-session watchdog policy.
+- remote-session watchdog policy;
+- firmware-update handoff.
 
 ## V0.1 Acceptance Criteria
 
@@ -403,8 +465,9 @@ The protocol is ready for Web UI integration when all of the following are demon
 2. `PING` survives repeated connect/disconnect cycles.
 3. `GET_INFO` returns valid protocol and firmware identification.
 4. `GET_STATUS` returns stable Vin/Vout/Iin/Iout values.
-5. CRC-corrupted packets are rejected without side effects.
-6. Invalid references are rejected by firmware.
-7. `OUTPUT_ENABLE` enters the normal Power Manager startup path.
-8. `OUTPUT_DISABLE` safely requests shutdown.
-9. Browser loss or UART noise cannot bypass converter protection.
+5. COBS framing resynchronizes after injected byte errors or garbage frames.
+6. CRC-corrupted packets are rejected without side effects.
+7. Invalid references are rejected by firmware.
+8. `OUTPUT_ENABLE` enters the normal Power Manager startup path rather than directly enabling PWM.
+9. `OUTPUT_DISABLE` safely requests shutdown.
+10. Browser loss or UART noise cannot bypass converter protection.
