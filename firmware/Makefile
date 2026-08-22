@@ -4,6 +4,7 @@ OPENCM3_DIR  ?= ../third_party/libopencm3
 
 OBJS := main.o \
         host_service.o \
+        board_io.o \
         clock.o \
         power_stage.o \
         timebase.o \
