@@ -4,14 +4,18 @@ on:
   push:
     paths:
       - 'firmware/**'
+      - 'test/**'
       - 'tools/bootstrap-libopencm3.sh'
       - 'tools/build-firmware.sh'
+      - 'tools/host_cli.py'
       - '.github/workflows/firmware-build.yml'
   pull_request:
     paths:
       - 'firmware/**'
+      - 'test/**'
       - 'tools/bootstrap-libopencm3.sh'
       - 'tools/build-firmware.sh'
+      - 'tools/host_cli.py'
       - '.github/workflows/firmware-build.yml'
 
 jobs:
@@ -21,10 +25,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install ARM toolchain
+      - name: Install toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-none-eabi make
+          sudo apt-get install -y gcc-arm-none-eabi make python3-pip
+          python3 -m pip install --break-system-packages pyserial
+
+      - name: Test protocol codec
+        run: |
+          gcc -std=c11 -Wall -Wextra -Werror \
+            test/protocol/test_protocol.c \
+            firmware/protocol/cobs.c \
+            firmware/protocol/crc16.c \
+            firmware/protocol/protocol.c \
+            -o /tmp/test_protocol
+          /tmp/test_protocol
+
+      - name: Test measurement conversion
+        run: |
+          gcc -std=c11 -Wall -Wextra -Werror \
+            test/power/test_measurements.c \
+            firmware/power/measurements.c \
+            -o /tmp/test_measurements
+          /tmp/test_measurements
+
+      - name: Test Python host codec
+        run: python3 tools/host_cli.py self-test
 
       - name: Bootstrap libopencm3
         run: bash tools/bootstrap-libopencm3.sh
