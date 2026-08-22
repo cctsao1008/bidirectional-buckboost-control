@@ -44,10 +44,12 @@ Supervisory control operates across this loop and is responsible for enabling, s
 
 The hardware is a four-switch non-isolated bidirectional buck-boost converter built from two synchronous half bridges connected through a single inductor.
 
-- Half-bridge A: Q1 / Q2
-- Half-bridge B: Q4 / Q3
+- Left half-bridge: Q1 high-side / Q4 low-side
+- Right half-bridge: Q2 high-side / Q3 low-side
 - Main inductor: 22 µH nominal
 - Switching frequency: 200 kHz nominal
+
+This mapping follows the V1.2 schematic and MCU PWM routing and is the implementation source of truth.
 
 The same power stage supports energy flow in either direction.
 
@@ -89,6 +91,8 @@ optional filtering / estimation
 controller state inputs
 ```
 
+The board does not provide a dedicated ADC channel for main-inductor current. If a controller requires `iL`, it must use a reconstructed state derived from the existing Vin/Iin/Vout/Iout measurements and converter state. No additional current sensor is assumed by the project architecture.
+
 ## Control Architecture
 
 Control laws are intentionally separated from hardware-specific PWM and ADC code.
@@ -108,6 +112,7 @@ Its responsibilities include:
 - complementary output generation;
 - effective dead-time handling;
 - safe transitions between buck, mixed, and boost operation;
+- bootstrap-refresh and minimum-pulse constraints;
 - preventing invalid simultaneous switch states.
 
 The effective gate timing is a combined property of MCU PWM generation, gate-driver behavior, propagation delay, gate resistance, MOSFET switching behavior, and hardware dead-time mechanisms.
@@ -150,6 +155,24 @@ The design must account for:
 - hardware-assisted fault response where available.
 
 No software control experiment should bypass the minimum hardware-safety mechanisms required to protect the power stage.
+
+## Host and Instrumentation Boundary
+
+Host control is supervisory only:
+
+```text
+Web Browser
+    ↓
+Web Serial
+    ↓
+USB-to-UART
+    ↓
+COBS + CRC protocol
+    ↓
+Power Manager / Telemetry
+```
+
+The browser must not participate in switching-cycle control. Communication loss must not remove local protection or make PWM timing dependent on host timing.
 
 ## Model-to-Hardware Loop
 
