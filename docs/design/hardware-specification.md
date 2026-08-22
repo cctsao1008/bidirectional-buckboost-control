@@ -2,330 +2,264 @@
 
 ## Purpose
 
-This document consolidates the hardware specification of the CBB02405D / CBB024D bidirectional four-switch buck-boost board for use as the hardware baseline of the `bidirectional-buckboost-control` project.
+This document is the canonical project-owned hardware specification for the CBB024D V1.2 board used by `bidirectional-buckboost-control`.
 
-Primary source:
+Primary implementation source:
+
 - `CBB024D-1-V1.2.pdf`, dated 2022-03-10
 
-Cross-checked against:
-- `CBB02405D Bidirectional BUCK-BOOST Hardware Design Report.pdf`, Rev1.0, dated 2021-04-10
-- `CBB024D User Manual.pdf`, Rev1.0, dated 2021-04-10
-- `CBB02405D Bidirectional BUCK-BOOST Software Design Report.pdf`, Rev1.0, dated 2021-04-10
+Cross-reference sources:
 
-Where the 2021 conceptual documentation conflicts with the later V1.2 schematic, the V1.2 schematic and MCU net mapping are treated as authoritative for implementation.
+- vendor bidirectional BUCK-BOOST hardware design report, Rev1.0, 2021-04-10;
+- vendor user manual, Rev1.0, 2021-04-10;
+- vendor software design report, Rev1.0, 2021-04-10;
+- vendor example firmware.
 
----
+Where older conceptual material conflicts with the V1.2 schematic/net mapping, the V1.2 schematic controls the physical implementation decision.
 
 ## 1. Converter Topology
 
-The board is a non-isolated, synchronous, four-switch bidirectional buck-boost converter using two half bridges and one main inductor.
-
-### 1.1 Physical switch arrangement
+The board is a non-isolated synchronous four-switch bidirectional buck-boost converter using two half bridges and one main inductor.
 
 ```text
-                         L1 = 22 uH
-                  HS-1 ───────── HS-2
-                    │               │
-                Q1 high          Q2 high
-VIN+ ───────────────┤               ├────────────── VOUT+
-                    │               │
-                Q4 low           Q3 low
-                    │               │
-                   GND─────────────GND
+Port A / VIN side                    Port B / VOUT side
+
+      Q1 high                              Q2 high
+         |                                    |
+         +----------- L1 = 22 uH -------------+
+         |                                    |
+      Q4 low                               Q3 low
+         |                                    |
+        GND----------------------------------GND
 ```
 
-For the V1.2 hardware:
+### 1.1 Canonical V1.2 bridge mapping
 
 | Half bridge | High-side MOSFET | Low-side MOSFET | PWM signals |
-|---|---|---|---|
-| Left bridge | Q1 | Q4 | `PWM1H`, `PWM1L` |
-| Right bridge | Q2 | Q3 | `PWM2H`, `PWM2L` |
+| --- | --- | --- | --- |
+| Left / Port A | Q1 | Q4 | `PWM1H`, `PWM1L` |
+| Right / Port B | Q2 | Q3 | `PWM2H`, `PWM2L` |
 
-This mapping is the one to use in firmware and documentation.
+This mapping is mandatory for firmware and documentation.
 
-### 1.2 Documentation inconsistency
+### 1.2 Vendor-document labeling caveat
 
-The 2021 hardware design report uses a conceptual labeling that groups Q1/Q2 and Q3/Q4 as the synchronous converter pairs. The 2022 V1.2 schematic and MCU signal routing establish the actual physical half-bridge pairs as:
+Some older vendor conceptual diagrams group switch labels differently. Those diagrams are useful for topology explanation but must not override the V1.2 schematic/net routing.
 
-```text
-Q1 / Q4 = left half bridge
-Q2 / Q3 = right half bridge
-```
+## 2. Board-Level Ratings
 
-Firmware must follow the V1.2 schematic/net mapping.
-
----
-
-## 2. Board-Level Electrical Ratings
-
-| Item | Specification |
-|---|---|
-| Topology | Four-switch synchronous bidirectional buck-boost |
+| Item | Vendor/reference specification |
+| --- | --- |
+| Topology | four-switch synchronous bidirectional buck-boost |
 | Input voltage | 12–48 VDC |
 | Output voltage | 5–48 VDC |
 | Rated output | 24 V / 5 A |
 | Suggested maximum output power | 200 W |
 | Output current range | 0–5 A |
-| Output current limit | 5 A |
-| Output-voltage ripple | ≤ 1% of output voltage, peak-to-peak |
+| Published current limit | 5 A |
+| Published output ripple | <= 1% p-p |
 | Switching frequency | 200 kHz |
-| Control frequency | 200 kHz |
-| Cooling | Natural convection |
-| Operating temperature | −30 to +40 °C |
-| Storage temperature | −40 to +80 °C |
-| Board size | 100 × 90 × 20 mm |
-| Communication | Reserved UART interface |
+| Vendor control frequency | 200 kHz |
+| Cooling | natural convection |
+| Operating temperature | -30 to +40 C |
+| Storage temperature | -40 to +80 C |
+| Board size | about 100 x 90 x 20 mm |
+| Communication | reserved UART |
 | Programming/debug | SWD |
 
-### 2.1 Vendor protection functions
+These are vendor/reference ratings, not automatically the validated operating envelope of every new controller.
 
-| Protection | Vendor specification |
-|---|---|
-| Short-circuit protection | Supported, automatic recovery |
-| Output over-voltage protection | Supported, >48 V, automatic recovery |
-| Input under-voltage protection | Supported, <12 V, automatic recovery |
-| Input over-voltage protection | Supported, >48 V, automatic recovery |
-| Output over-current protection | Supported, automatic recovery |
+## 3. Vendor Protection Evidence and Documentation Conflict
 
-These are vendor-system behavior specifications. The independent firmware must define and validate its own protection behavior.
+Vendor material indicates support for short-circuit, overcurrent, input under/overvoltage, and output overvoltage handling. However, the vendor documents are not fully consistent about recovery semantics: user/product-facing material describes automatic recovery for several protection cases, while the software reference distinguishes more severe fault behavior for at least some overvoltage conditions.
 
----
+Therefore this repository does **not** collapse the vendor evidence into one invented recovery rule.
 
-## 3. Main Power Stage
+Project rule:
 
-### 3.1 MOSFETs
+> Vendor thresholds and recovery behavior are reference evidence only. Independent firmware protection states, thresholds, retry, and latch policy are defined by `protection-and-state-machine.md` and validated as implementation deltas.
+
+## 4. Main Power Components
+
+### 4.1 MOSFETs
 
 | Reference | Part |
-|---|---|
+| --- | --- |
 | Q1 | BSC070N10NS3G |
 | Q2 | BSC070N10NS3G |
 | Q3 | BSC070N10NS3G |
 | Q4 | BSC070N10NS3G |
 
-Each MOSFET gate has a 10 kΩ gate-source pull resistor.
+Reference device data used for engineering estimates include approximately 100 V `VDS`, 6.3 mΩ typical `RDS(on)`, and 42 nC typical gate charge under datasheet conditions. Actual switching behavior depends on board conditions.
 
-### 3.2 Main inductor
+Each gate has a gate-source pull resistor; external gate-drive resistance is 10 Ω.
+
+### 4.2 Main inductor
 
 | Item | Value |
-|---|---|
+| --- | --- |
 | Reference | L1 |
-| Inductance | 22 µH |
+| Nominal inductance | 22 µH |
 | Tolerance | ±20% |
+| DCR reference value | about 20.5 mΩ typ |
 
-### 3.3 Port capacitance
+The estimator/controller must tolerate parameter uncertainty; nominal L is not treated as identified truth.
 
-#### Input port
+### 4.3 Port capacitance
 
-| Component | Value |
-|---|---|
-| C1 | 220 µF / 63 V |
-| C2 | 220 µF / 63 V |
-| C5 | 10 µF / 50 V |
-| C6 | 10 µF / 50 V |
-| R3 | 10 kΩ |
-| D1 | SS210 |
+Input side includes two 220 µF / 63 V bulk capacitors plus 10 µF local capacitors. Output side uses the same nominal arrangement.
 
-Nominal bulk capacitance:
+Useful starting values:
 
 ```text
-CIN,bulk = 440 µF
+bulk per port       ≈ 440 uF
+including 2 x 10 uF ≈ 460 uF nominal
 ```
 
-#### Output port
+Effective capacitance, ESR, and ceramic DC-bias derating may differ materially from these nominal sums.
 
-| Component | Value |
-|---|---|
-| C3 | 220 µF / 63 V |
-| C4 | 220 µF / 63 V |
-| C7 | 10 µF / 50 V |
-| C8 | 10 µF / 50 V |
-| R4 | 10 kΩ |
-| D2 | SS210 |
+## 5. Gate-Drive Architecture
 
-Nominal bulk capacitance:
-
-```text
-COUT,bulk = 440 µF
-```
-
----
-
-## 4. Gate-Drive Architecture
-
-| Item | Specification |
-|---|---|
-| Driver | Si8233BD-D-IS |
+| Item | Hardware |
+| --- | --- |
+| Gate driver | Si8233BD-D-IS |
 | Quantity | 2 |
-| Gate resistors | 10 Ω |
-| DT programming resistor | 3.3 kΩ to 5 V |
+| External gate resistor | 10 Ω |
+| DT-programming resistor | 3.3 kΩ to 5 V reference network |
 | Bootstrap diode | SS210 |
 | Bootstrap capacitor | 100 nF |
-| Driver input logic supply | 5 V |
-| Driver `DISABLE` | Permanently tied low in schematic |
+| Driver logic supply | 5 V |
+| Driver `DISABLE` | tied low / not MCU-controlled on V1.2 |
 
-### 4.1 Driver mapping
+### 5.1 PWM-to-device mapping
 
 | PWM signal | MOSFET |
-|---|---|
+| --- | --- |
 | `PWM1H` | Q1 |
 | `PWM1L` | Q4 |
 | `PWM2H` | Q2 |
 | `PWM2L` | Q3 |
 
-### 4.2 Safety implication
+### 5.2 Safety implication
 
-The gate-driver `DISABLE` input is not routed to an MCU-controlled shutdown signal. Safe shutdown must therefore be implemented through the STM32F334/HRTIM output-control path and any usable hardware fault mechanisms available in the MCU/peripheral routing.
+Because driver `DISABLE` is not routed to the MCU, project firmware must establish safe-off behavior through GPIO/HRTIM output forcing and usable STM32F334 hardware fault paths. A software assumption that a separate gate-driver-disable line exists is invalid.
 
-This must be validated before closed-loop power testing.
+## 6. Auxiliary Power
 
----
-
-## 5. Auxiliary Power
-
-The auxiliary power supply can draw power from either power port:
+The auxiliary supply can draw from either power port through diode isolation:
 
 ```text
-VIN+  ── D4 ──┐
-               ├── auxiliary supply input
-VOUT+ ── D3 ──┘
+VIN+  -- diode --+
+                 +--> auxiliary regulator input
+VOUT+ -- diode --+
 ```
 
-### 5.1 Power rails
+Reference rail chain:
 
 | Stage | Device | Nominal function |
-|---|---|---|
-| First stage | XL7005A | ~10 V auxiliary/gate-driver rail |
-| Second stage | AMS1117-5 | 5 V |
-| Third stage | AMS1117-3.3 | 3.3 V |
-| Analog rail filtering | L3/L4 + capacitors | Filtered analog supply/return |
+| --- | --- | --- |
+| first | XL7005A | approximately 10 V auxiliary/gate-drive rail |
+| second | AMS1117-5 | 5 V |
+| third | AMS1117-3.3 | 3.3 V |
+| analog filtering | L3/L4 + capacitors | filtered analog supply/return |
 
-### 5.2 `P12V` naming caveat
+### 6.1 `P12V` naming caveat
 
-The V1.2 schematic labels the first auxiliary rail as `P12V`, but the XL7005A feedback network is:
+The schematic net is named `P12V`, but the XL7005A divider values (`33 kΩ`, `4.7 kΩ`, `VFB ≈ 1.25 V`) imply approximately:
 
 ```text
-R17 = 33 kΩ
-R19 = 4.7 kΩ
-VFB  = 1.25 V
+1.25 * (1 + 33 / 4.7) ≈ 10.0 V
 ```
 
-Derived nominal rail:
+The hardware design report also describes about 10 V. Treat `P12V` as a legacy net name, not proof of a regulated 12 V rail.
+
+### 6.2 Startup implication
+
+Because logic/gate-drive power can be sourced from either power port, firmware startup must consider:
 
 ```text
-VOUT ≈ 1.25 × (1 + 33 / 4.7)
-     ≈ 10.0 V
+Port A energized / Port B discharged
+Port A energized / Port B pre-biased
+Port A absent / Port B energized
+both ports energized
+reverse-power startup
 ```
 
-The hardware design report also describes this rail as 10 V.
+## 7. Voltage Sensing
 
-Therefore:
+Both terminal voltages use GS8552-SR signal-conditioning stages.
 
-> `P12V` is a legacy schematic net name; the documented and resistor-derived nominal rail is approximately 10 V.
-
----
-
-## 6. Voltage Sensing
-
-The board measures both input and output port voltages using GS8552-SR signal-conditioning stages.
-
-Nominal resistor ratio:
+Nominal scale:
 
 ```text
-RIN = 68 kΩ
-RF  = 3.3 kΩ
-KV  = 3.3 / 68
-    ≈ 0.04853 V/V
+Kv = 3.3 kΩ / 68 kΩ
+   ≈ 0.04853 V/V
 ```
 
-Nominal relationship:
+Thus:
 
 ```text
-VADC ≈ KV × VPORT
+Vadc  ≈ Kv * Vport
+Vport ≈ Vadc / Kv
 ```
 
 Examples:
 
 ```text
-VPORT = 48 V  →  VADC ≈ 2.33 V
-VADC  = 3.3 V →  VPORT ≈ 68.0 V
+48 V port -> about 2.33 V ADC
+3.3 V ADC -> about 68.0 V equivalent sense full scale
 ```
 
-The ~68 V value is a theoretical signal-conditioning full-scale value, not an operating-voltage rating.
+The approximately 68 V figure is only a sensing full-scale estimate, not a board operating rating.
 
-### 6.1 ADC output filter
+Reference output RC uses approximately 100 Ω / 330 pF, giving an ideal pole near 4.82 MHz before op-amp/ADC effects.
 
-```text
-R = 100 Ω
-C = 330 pF
-fc ≈ 1 / (2πRC) ≈ 4.82 MHz
-```
+## 8. Bidirectional Current Sensing
 
-The complete analog path must be characterized as part of the measurement plant.
-
----
-
-## 7. Current Sensing
-
-The board already includes bidirectional input- and output-port current sensing.
-
-### 7.1 Shunts
+### 8.1 Shunts
 
 | Signal | Shunt | Value |
-|---|---|---|
-| `Iin` | R7 | 1 mΩ, ±1%, 2512 |
-| `Iout` | R8 | 1 mΩ, ±1%, 2512 |
+| --- | --- | --- |
+| `Iin` | R7 | 1 mΩ, 1%, 2512 |
+| `Iout` | R8 | 1 mΩ, 1%, 2512 |
 
-### 7.2 Current amplifier
+### 8.2 Amplification and bias
 
-Nominal resistor values:
-
-```text
-RIN = 100 Ω
-RF  = 15 kΩ
-```
-
-Amplifier gain:
+The current paths use GS8552-SR differential amplification with nominal resistor ratio:
 
 ```text
-GI = 15 kΩ / 100 Ω
-   = 150 V/V
+15 kΩ / 100 Ω = 150 V/V
 ```
 
 With a 1 mΩ shunt:
 
 ```text
-Current sensitivity = 150 × 0.001
-                    = 0.150 V/A
+sensitivity ≈ 0.150 V/A
 ```
 
-The circuit uses a nominal 1.65 V offset for bidirectional current measurement:
+The ADC current signal is centered on nominal 1.65 V:
 
 ```text
-VADC,I = 1.65 V + 0.150 × I
-I      = (VADC,I - 1.65) / 0.150
+Vadc,I = 1.65 + 0.150 * I
 ```
 
-Examples:
+Nominal examples:
 
 ```text
-I = +5 A → VADC ≈ 2.40 V
-I =  0 A → VADC ≈ 1.65 V
-I = -5 A → VADC ≈ 0.90 V
+-5 A -> 0.90 V
+ 0 A -> 1.65 V
++5 A -> 2.40 V
 ```
 
-Actual firmware polarity must be verified against the physical current direction and calibration data.
+Measured zero offset and polarity must be encoded in calibration. Negative current is valid and is not clipped by the project sensing layer.
 
-### 7.3 Current-sense output filter
+### 8.3 1.65 V reference
 
-```text
-R = 100 Ω
-C = 330 pF
-fc ≈ 4.82 MHz
-```
+The bias is derived from a 3.3 kΩ / 3.3 kΩ divider, buffered by the GS8552-SR family device and filtered. Firmware must not assume exact 1.650 V when measured offset is available.
 
-### 7.4 No direct inductor-current ADC
+### 8.4 No direct `iL` ADC
 
-The MCU directly samples:
+MCU ADC inputs are:
 
 ```text
 Vin
@@ -335,337 +269,206 @@ Iout
 VADJ
 ```
 
-There is no dedicated ADC channel for the main inductor current `iL`.
+There is no dedicated main-inductor-current ADC channel.
 
-The `CNT1/CNT2` path is an inductor-current measurement access point described by the vendor as a normally shorted series point for external test measurement.
+The `CNT1/CNT2` location is an inductor-series measurement access point intended for external development measurement and is not an MCU current channel.
 
-Project constraint:
+Final project constraint:
 
-> No additional current sensor will be added.
-
-If a controller requires inductor current, it must be reconstructed from existing signals and converter state:
-
-```text
-Vin
-Iin
-Vout
-Iout
-D1
-D2
-switching/operating state
-        ↓
-iL estimator
-        ↓
-iL_hat
-```
-
----
-
-## 8. 1.65 V Current-Sense Reference
-
-| Item | Value |
-|---|---|
-| Divider | 3.3 kΩ / 3.3 kΩ |
-| Nominal reference | 1.65 V |
-| Buffer | GS8552-SR |
-| Filter capacitor | 470 nF |
-| Net name | `P1V65` |
-
-Zero-current calibration must use measured offset rather than assuming exactly 1.650 V.
-
----
+> No added inductor-current sensor. Controllers that require `iL` use `iL_hat` reconstructed from existing signals and converter state.
 
 ## 9. Analog Reference Potentiometer
 
-| Item | Value |
-|---|---|
-| Potentiometer | 50 kΩ (`3296W-1-503LF`) |
-| Series resistor from 3.3 V | 10 kΩ |
-| ADC filter resistor | 3.3 kΩ |
-| ADC filter capacitor | 470 nF |
-| ADC net | `ADC_VADJ` |
-
-Approximate unloaded maximum:
+Reference hardware uses a 50 kΩ potentiometer with a 10 kΩ series feed from 3.3 V and an ADC filter network. Approximate unloaded maximum is:
 
 ```text
-VADJ,max ≈ 3.3 × 50 / (50 + 10)
-         ≈ 2.75 V
+3.3 * 50 / (50 + 10) ≈ 2.75 V
 ```
 
----
+The project may use `VADJ` for local/reference experiments, but host-controlled operation does not depend on it.
 
-## 10. MCU and Peripheral Mapping
+## 10. STM32F334 and Pin Mapping
 
-### 10.1 MCU
+### 10.1 MCU/peripheral reference configuration
 
-| Item | Specification |
-|---|---|
+| Item | Vendor/reference value |
+| --- | --- |
 | MCU | STM32F334C8T6 |
-| Vendor HCLK configuration | 64 MHz |
-| Vendor HRTIM clock | 128 MHz |
-| Vendor ADC clock | 64 MHz |
-| Vendor ADC resolution | 12 bit |
-| Vendor switching/control rate | 200 kHz |
+| HCLK | 64 MHz |
+| HRTIM clock | 128 MHz |
+| ADC clock | 64 MHz |
+| ADC resolution | 12 bit |
+| switching/control rate | 200 kHz |
 
-### 10.2 PWM pins
+### 10.2 PWM
 
-| MCU pin | Signal | Physical MOSFET |
-|---|---|---|
-| PA8 | `PWM1H` | Q1, left high-side |
-| PA9 | `PWM1L` | Q4, left low-side |
-| PA10 | `PWM2H` | Q2, right high-side |
-| PA11 | `PWM2L` | Q3, right low-side |
+| MCU pin | Signal | Device |
+| --- | --- | --- |
+| PA8 | `PWM1H` | Q1 left high-side |
+| PA9 | `PWM1L` | Q4 left low-side |
+| PA10 | `PWM2H` | Q2 right high-side |
+| PA11 | `PWM2L` | Q3 right low-side |
 
-### 10.3 ADC pins
-
-| MCU pin | Signal | Measurement |
-|---|---|---|
-| PA0 | `ADC_Vin` | Input voltage |
-| PA1 | `ADC_Iin` | Input current |
-| PA2 | `ADC_Vout` | Output voltage |
-| PA3 | `ADC_Iout` | Output current |
-| PA4 | `ADC_VADJ` | Local reference potentiometer |
-
-Vendor firmware configures ADC1 channels 1–4 for Vin/Iin/Vout/Iout with DMA and ADC2 for the potentiometer.
-
-### 10.4 UART
+### 10.3 ADC
 
 | MCU pin | Signal |
-|---|---|
-| PB6 | `USART1_TX` |
-| PB7 | `USART1_RX` |
+| --- | --- |
+| PA0 | `ADC_Vin` |
+| PA1 | `ADC_Iin` |
+| PA2 | `ADC_Vout` |
+| PA3 | `ADC_Iout` |
+| PA4 | `ADC_VADJ` |
 
-Planned host path:
+Vendor firmware uses ADC1 scan/DMA for the four terminal measurements and ADC2 for `VADJ`.
 
-```text
-Web Browser
-    ↓
-Web Serial API
-    ↓
-USB-to-UART
-    ↓
-STM32F334 USART1
-```
+### 10.4 Local keys
 
-### 10.5 SWD
+| MCU pin | Signal | Hardware behavior |
+| --- | --- | --- |
+| PB3 | `KEY1` | external 10 kΩ pull-up, active-low, RC filtered |
+| PB4 | `KEY2` | external 10 kΩ pull-up, active-low, RC filtered |
 
-| MCU pin | Signal |
-|---|---|
-| PA13 | `SWDAT` |
-| PA14 | `SWCLK` |
+Keys are inputs to application policy only; they must not directly bypass Power Manager authority.
 
-### 10.6 OLED
+### 10.5 LEDs
 
 | MCU pin | Signal |
-|---|---|
-| PB8 | `I2C1_SCL` |
-| PB9 | `I2C1_SDA` |
-
-### 10.7 LEDs
-
-| MCU pin | Signal |
-|---|---|
+| --- | --- |
 | PB0 | `LED_G` |
 | PB1 | `LED_Y` |
 | PB2 | `LED_R` |
 
----
+Reference documentation indicates active-high LEDs.
 
-## 11. Vendor ADC Timing
+### 10.6 UART
 
-The vendor software report configures:
+| MCU pin | Signal |
+| --- | --- |
+| PB6 | `USART1_TX` |
+| PB7 | `USART1_RX` |
 
-- ADC1 channels 1–4 for Vin, Iin, Vout, and Iout
-- 12-bit sampling
-- ADC1 scan mode
-- DMA circular transfer
-- HRTIM Timer A Compare3 as ADC trigger
-- 4.5 ADC-clock-cycle sample time
+### 10.7 OLED / I2C
 
-This matters because `Iin`/`Iout` reconstruction quality depends on the switching state at the ADC sample instant.
+| MCU pin | Signal |
+| --- | --- |
+| PB8 | `I2C1_SCL` |
+| PB9 | `I2C1_SDA` |
 
-The independent firmware must deliberately characterize and select ADC sampling phase.
+### 10.8 SWD
 
----
+| MCU pin | Signal |
+| --- | --- |
+| PA13 | `SWDAT` |
+| PA14 | `SWCLK` |
 
-## 12. Hardware Constraints Relevant to Firmware
-
-### 12.1 No added current sensor
-
-Only existing sensing channels are used:
-
-```text
-Vin
-Iin
-Vout
-Iout
-VADJ
-```
-
-### 12.2 No MCU-controlled gate-driver disable
-
-The Si8233 `DISABLE` pins are tied low, so protection architecture must rely on HRTIM-safe output forcing and applicable STM32F334 fault paths.
-
-### 12.3 Bootstrap constraints
-
-The high-side drive uses bootstrap components. Modulation must account for:
+### 10.9 Verified unused pins on V1.2
 
 ```text
-maximum duty
-minimum off-time
-minimum pulse width
-bootstrap refresh
-dead time
+PA5 PA6 PA7 PA12 PA15
+PB5 PB10 PB11 PB12 PB13 PB14 PB15
+PC13 PC14 PC15
+PF0 PF1
 ```
 
-### 12.4 Bidirectional auxiliary supply
+Board-specific startup treatment is defined in `gpio-initialization.md`.
 
-The logic/gate-drive supply can be powered from either converter port. Startup logic must therefore handle:
+## 11. Vendor ADC Timing Evidence
 
-```text
-Vin energized, Vout discharged
-Vin energized, Vout pre-biased
-Vin absent, Vout energized
-both ports energized
-reverse-power startup
-```
+Reference firmware configures:
 
-### 12.5 Measurement/debug safety
+- ADC1 channels 1–4 for `Vin`, `Iin`, `Vout`, `Iout`;
+- scan mode and circular DMA;
+- HRTIM Timer A Compare3 as ADC trigger;
+- short ADC sample time at the vendor clock configuration.
 
-Vendor documentation explicitly warns:
+This is relevant because terminal-current/voltage samples are switching-phase dependent. The independent implementation deliberately defines trigger phase, channel sequence, conversion latency, and control consume point rather than assuming vendor timing is automatically correct for the new estimator.
 
-- do not perform online debugging while converter input power is connected;
-- incorrect PWM can cause MOSFET shoot-through;
-- do not simultaneously use ordinary earth-referenced probes on floating high-side and low-side nodes;
-- use appropriate isolated/differential measurement methods for high-side measurements.
+## 12. Hardware Constraints That Firmware Must Respect
 
----
+1. No dedicated `iL` ADC and no added final-architecture sensor.
+2. No MCU-controlled gate-driver `DISABLE`.
+3. Bootstrap high-side drive imposes off-time/refresh constraints.
+4. Physical half bridges are Q1/Q4 left and Q2/Q3 right.
+5. Port-current sensing is bidirectional around a nominal 1.65 V offset.
+6. Auxiliary logic power can come from either converter port.
+7. HRTIM/ADC timing is part of control design.
+8. SWD debugging must follow the vendor’s powered-converter safety warning.
+9. High-side/switch-node probing requires differential or otherwise isolated instrumentation.
 
-## 13. Derived Nominal Measurement Constants
-
-These are schematic-derived nominal starting values, not final calibration constants.
+## 13. Nominal Measurement Constants
 
 | Quantity | Nominal value | Basis |
-|---|---:|---|
-| Voltage gain `KV` | 0.04853 V/V | 3.3 kΩ / 68 kΩ |
-| Port voltage at 3.3 V ADC | ~68.0 V | `3.3 / KV` |
-| Current amplifier gain | 150 V/V | 15 kΩ / 100 Ω |
-| Current sensitivity | 0.150 V/A | 150 × 1 mΩ |
-| Zero-current ADC voltage | 1.65 V nominal | Midscale bias |
-| +5 A ADC voltage | 2.40 V nominal | `1.65 + 5 × 0.15` |
-| −5 A ADC voltage | 0.90 V nominal | `1.65 − 5 × 0.15` |
-| ADC output RC pole | ~4.82 MHz | 100 Ω / 330 pF |
-| First auxiliary rail | ~10.0 V | XL7005A divider |
-| Potentiometer max | ~2.75 V | 3.3 V, 10 kΩ + 50 kΩ |
+| --- | ---: | --- |
+| voltage gain | 0.04853 V/V | 3.3 kΩ / 68 kΩ |
+| equivalent port at 3.3 V ADC | ~68.0 V | `3.3 / Kv` |
+| current amplifier gain | 150 V/V | 15 kΩ / 100 Ω |
+| current sensitivity | 0.150 V/A | gain × 1 mΩ |
+| zero-current voltage | 1.65 V nominal | midpoint bias |
+| +5 A voltage | 2.40 V nominal | ideal |
+| -5 A voltage | 0.90 V nominal | ideal |
+| sense RC pole | ~4.82 MHz ideal | 100 Ω / 330 pF |
+| first auxiliary rail | ~10.0 V | XL7005A divider |
+| `VADJ` max | ~2.75 V unloaded | 3.3 V, 10 kΩ + 50 kΩ |
 
 Use calibrated values in control firmware.
 
----
-
-## 14. Recommended Firmware Hardware Abstraction
+## 14. Canonical Hardware Abstraction
 
 ```text
-board_measurements_t
-    vin
-    iin
-    vout
-    iout
-    vadj
+measurements
+  Vin / Iin / Vout / Iout / VADJ
 
-board_pwm_t
-    left_high   -> Q1
-    left_low    -> Q4
-    right_high  -> Q2
-    right_low   -> Q3
+power-stage mapping
+  left_high  -> Q1
+  left_low   -> Q4
+  right_high -> Q2
+  right_low  -> Q3
 
-board_comms_t
-    USART1 TX   -> PB6
-    USART1 RX   -> PB7
+host UART
+  TX -> PB6
+  RX -> PB7
 ```
 
-Recommended dependency direction:
+Dependency direction:
 
 ```text
 Control / Estimation
         ↓
 Modulation
         ↓
-Board / Platform API
+Platform API
         ↓
-libopencm3
-        ↓
-STM32F334
+libopencm3 / STM32F334
 ```
 
----
+## 15. Source Hierarchy
 
-## 15. Key Hardware Facts to Freeze
+For physical implementation decisions:
 
-1. Physical half bridges are `Q1/Q4` on the left and `Q2/Q3` on the right.
-2. Main inductor is nominally 22 µH.
-3. Nominal switching/control rate is 200 kHz.
-4. Port-current sensing already exists for both `Iin` and `Iout`.
-5. Current shunts are 1 mΩ.
-6. Current sensing is bidirectional using a nominal 1.65 V ADC bias.
-7. There is no dedicated inductor-current ADC channel.
-8. No additional current sensor will be added.
-9. Inductor current must be reconstructed if required by the controller.
-10. Existing host interface is USART1 on PB6/PB7.
-11. Gate-driver `DISABLE` is not MCU-controlled.
-12. Schematic net `P12V` is nominally about 10 V according to the documented regulator design.
-13. Auxiliary power can be sourced from either converter port.
-14. ADC sample timing relative to PWM is a control-design variable.
-15. Safe PWM shutdown must be verified before closed-loop power experiments.
+1. **2022 V1.2 schematic/net mapping** — physical source of truth.
+2. **Controlled physical board measurement** — empirical source when method/conditions are recorded.
+3. **2021 hardware design report** — design intent/derivation.
+4. **2021 software report/examples** — vendor implementation reference.
+5. **2021 user/product material** — published operating guidance/specification.
 
----
+When sources disagree, record the discrepancy rather than silently reconciling it.
 
-## 16. Source Hierarchy
-
-For implementation decisions:
-
-1. **2022 V1.2 schematic** — physical net/component truth
-2. **Physical board measurement** — final empirical truth
-3. **2021 hardware design report** — design intent and derivation
-4. **2021 software design report** — vendor firmware reference
-5. **2021 user manual** — vendor operating specifications and safety guidance
-
-If a conceptual diagram conflicts with the V1.2 schematic, record the discrepancy and follow the actual schematic/netlist for firmware implementation.
-
----
-
-## 17. Immediate Project Architecture
+## 16. Architecture Consequence
 
 ```text
-Existing sensors
-Vin / Iin / Vout / Iout
+existing Vin / Iin / Vout / Iout sensing
         ↓
-Calibration / synchronized sampling
+PWM-synchronized calibration/acquisition
         ↓
-State reconstruction / iL estimator
+iL estimator
         ↓
-Controller
+controller produces vL*
         ↓
-Unified modulation
+unified d1 / d2 allocation
         ↓
 HRTIM
         ↓
-Q1 / Q4 + Q2 / Q3
+Q1/Q4 left + Q2/Q3 right
 ```
 
-Host supervision:
-
-```text
-Web App
-   ↓
-Web Serial
-   ↓
-USB-to-UART
-   ↓
-USART1
-   ↓
-COBS + CRC protocol
-   ↓
-Power Manager / Telemetry
-```
-
-Real-time control and protection remain local to the STM32F334.
+Real-time control/protection remains local to STM32F334; host communication is supervisory only.
