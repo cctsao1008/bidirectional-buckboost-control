@@ -1,0 +1,36 @@
+name: Firmware Build
+
+on:
+  push:
+    paths:
+      - 'firmware/**'
+      - 'tools/bootstrap-libopencm3.sh'
+      - 'tools/build-firmware.sh'
+      - '.github/workflows/firmware-build.yml'
+  pull_request:
+    paths:
+      - 'firmware/**'
+      - 'tools/bootstrap-libopencm3.sh'
+      - 'tools/build-firmware.sh'
+      - '.github/workflows/firmware-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi make
+
+      - name: Bootstrap libopencm3
+        run: bash tools/bootstrap-libopencm3.sh
+
+      - name: Build firmware
+        run: bash tools/build-firmware.sh
+
+      - name: Show firmware size
+        run: arm-none-eabi-size firmware/buckboost_gate1.elf
