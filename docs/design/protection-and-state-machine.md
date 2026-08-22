@@ -2,261 +2,275 @@
 
 ## Purpose
 
-This document defines the supervisory behavior that surrounds all control algorithms.
+This document is the canonical definition of Power Manager states, switching authority, fault ownership, shutdown, and recovery policy. Other documents should reference these states rather than invent local variants.
 
-The converter must not transition directly from reset into closed-loop regulation. Startup, PWM qualification, soft-start, regulation, shutdown, and fault recovery are explicit states with deterministic entry and exit conditions.
+The independent firmware does not copy vendor retry or OVP policy blindly. Vendor behavior is reference evidence; project policy is explicit and testable.
 
 ## Supervisory Principle
 
-The control law determines the requested actuation only while the supervisor allows power-stage operation.
-
-Conceptually:
+A controller may request actuation only while the Power Manager authorizes it:
 
 ```text
-Measurements / faults
+measurements / faults / host-local requests
         ↓
-Supervisor
+Power Manager
         ↓
-Controller enable + limits
+controller enable + reference limits
         ↓
-Controller
+controller
         ↓
-Modulation
+modulation
         ↓
-PWM / gate driver
+HRTIM / gate driver
 ```
 
-A controller cannot override protection or state-machine decisions.
+Protection always overrides controller and host requests.
 
-## Proposed State Model
+## Canonical Externally Visible Power States
 
-The initial state machine should contain at least:
+These values are also reserved by the host protocol:
+
+| Value | State | Meaning |
+| ---: | --- | --- |
+| 0 | `OFF` | initialized or inactive; PWM authority absent |
+| 1 | `QUALIFY` | startup conditions being checked |
+| 2 | `SOFT_START` | controlled energization/reference ramp |
+| 3 | `REGULATION` | normal closed-loop operation |
+| 4 | `SHUTDOWN` | controlled stop in progress |
+| 5 | `FAULT` | faulted; PWM suppressed according to policy |
+| 6 | `RETRY_WAIT` | recoverable-fault delay before requalification |
+
+Reset/boot is an internal initialization condition and is not a stable wire-level power state.
+
+## Canonical State Flow
 
 ```text
-RESET
-  ↓
-IDLE
-  ↓
-QUALIFY
-  ↓
+BOOT/RESET
+    ↓
+   OFF
+    ↓ enable request
+ QUALIFY
+    ↓ qualified
 SOFT_START
-  ↓
+    ↓ complete
 REGULATION
-  ↓
-SHUTDOWN
+    ↓ disable request
+ SHUTDOWN
+    ↓
+   OFF
 ```
 
-with fault transitions available from every state in which the power stage can become energized:
+Fault paths:
 
 ```text
-FAULT_LATCHED
-FAULT_RETRY_WAIT
+any energized/qualifying state
+        ↓
+      FAULT
+       /  \
+ latched    recoverable
+   |           ↓
+ remain     RETRY_WAIT
+ FAULT         ↓
+         re-QUALIFY
 ```
 
-The exact set of states may evolve after the reference behavior is fully characterized.
+A fault-clear request never skips qualification.
 
-## RESET
+## OFF
 
-Responsibilities:
+Required properties:
 
-- initialize clocks and peripherals;
-- force PWM outputs into a known inactive state;
-- initialize ADC scaling and calibration data;
-- clear software controller state;
-- initialize fault inputs and status reporting.
-
-No power-stage switching is allowed until the required hardware and measurement paths are known to be initialized.
-
-## IDLE
-
-The converter is initialized but not switching.
-
-The supervisor may continue to monitor:
-
-- input voltage;
-- output voltage;
-- measured current;
-- requested setpoint;
-- fault inputs;
-- user enable request.
+- no switching authority;
+- HRTIM outputs inactive or platform held in an equivalent proven safe state;
+- controller output ignored;
+- host telemetry allowed;
+- passive measurement/calibration allowed only when its assumptions are valid;
+- enable request stored only as a request for `QUALIFY`.
 
 ## QUALIFY
 
-Before energizing the bridge, the supervisor verifies that startup conditions are acceptable.
+Before energizing, check at least the prerequisites relevant to the requested direction and operating envelope:
 
-Candidate qualification checks include:
+- measurement validity/plausibility;
+- voltage range and pre-bias state;
+- no active blocking fault;
+- valid target/reference;
+- valid power-flow direction;
+- HRTIM/modulation ready and inactive;
+- estimator quality if the selected startup/control path requires it;
+- configuration/calibration validity.
 
-- supply voltage inside the allowed operating range;
-- no active overcurrent / overvoltage condition;
-- valid ADC measurements;
-- valid requested operating direction;
-- valid voltage target;
-- PWM subsystem ready;
-- power-stage state consistent with the requested direction.
-
-Thresholds that are not yet independently verified should remain explicit configuration or characterization items rather than copied blindly from a reference implementation.
+A failed qualification returns to `OFF` or enters `FAULT` depending on severity; it never falls through to switching.
 
 ## SOFT_START
 
-Soft-start is an explicit controlled transition, not simply a delay before regulation.
+Soft start is a controlled transition, not a timer delay. It may:
 
-Possible responsibilities include:
+- ramp voltage/current/power reference;
+- bound `iL_ref` and duty slew;
+- initialize controller integrators;
+- initialize estimator state/confidence;
+- establish the initial modulation region;
+- detect startup abnormality;
+- handle pre-biased or reverse-powered terminals.
 
-- ramping voltage or current reference;
-- limiting duty slew;
-- limiting current;
-- initializing PI/PID integrators;
-- initializing observer or estimator states;
-- selecting the initial operating region;
-- detecting abnormal startup behavior.
-
-The reference system exhibits controlled startup behavior without large output overshoot; the independent implementation should reproduce and quantify this behavior before more advanced controllers are introduced.
+The objective is safe, bounded energization according to project limits. It does not need to reproduce the exact vendor transient waveform.
 
 ## REGULATION
 
-Closed-loop control is active only in this state.
+Closed-loop control is active only here. The Power Manager retains authority over:
 
-The supervisor still owns:
+- controller enable;
+- reference limits;
+- allowed direction;
+- shutdown request;
+- fault transitions;
+- controller-change qualification;
+- behavior when estimator confidence degrades.
 
-- operating-region selection;
-- power-flow direction;
-- duty and current limits;
-- controller enable state;
-- protection response;
-- transition to shutdown or fault states.
+Operating-region selection itself belongs to modulation, not the Power Manager, unless a region becomes forbidden by safety policy.
 
 ## SHUTDOWN
 
-Shutdown should be deterministic and should account for energy stored in the inductor and capacitors.
+Normal shutdown is deterministic and distinct from emergency fault suppression. Depending on direction and stored energy it may include:
 
-A shutdown strategy may include:
-
-- controlled reference ramp-down where safe;
+- controlled reference ramp-down;
+- bounded current reduction;
+- transition toward zero energy flow;
 - controller disable;
-- deterministic modulation stop;
-- PWM output disable;
-- verification that current has decayed appropriately.
+- deterministic PWM stop;
+- confirmation of a safe inactive state.
 
-Emergency fault shutdown is distinct from normal shutdown and may bypass the controlled ramp.
+A fault requiring immediate suppression may bypass the controlled ramp.
 
-## Fault Categories
+## FAULT
 
-The architecture should distinguish fault *detection* from fault *policy*.
-
-Potential fault classes include:
-
-- overcurrent;
-- output overvoltage;
-- input undervoltage;
-- input overvoltage;
-- short circuit;
-- invalid sensing;
-- impossible operating request;
-- timing / PWM configuration fault;
-- hardware fault input.
-
-Some faults may be recoverable while others should require manual reset.
-
-## Fault Response
-
-A fault response can contain several layers:
+Fault detection and recovery policy are separate concerns. On fault:
 
 ```text
-hardware event
-    ↓
-immediate PWM suppression
-    ↓
+fast source if available
+      ↓
+immediate PWM/HRTIM suppression
+      ↓
 software fault capture
-    ↓
-state transition
-    ↓
-recovery policy
+      ↓
+FAULT state
+      ↓
+policy: latch or retry
 ```
 
-Where hardware can suppress PWM independently of the control loop, that mechanism should be preferred for faults requiring the fastest response.
+Fault metadata should retain enough information for post-event analysis.
 
-## Retry Behavior
+## RETRY_WAIT
 
-Reference measurements show repeated shutdown/restart behavior under persistent output short-circuit conditions, consistent with an automatic retry policy. This observation does not by itself prove the internal vendor algorithm.
+Only explicitly recoverable faults may enter retry. Retry policy should define:
 
-The independent implementation should therefore define its own explicit retry policy, including:
+- delay;
+- optional retry count/backoff;
+- conditions that escalate to latched `FAULT`;
+- controller/estimator state reset;
+- requirement to return through `QUALIFY`.
 
-- retry delay;
-- maximum number of retries if applicable;
-- re-qualification before restart;
-- controller-state reset;
-- event logging;
-- conditions that escalate to a latched fault.
+No vendor auto-retry behavior is copied unless it is deliberately adopted and documented.
 
-## State Transfer Between Controllers
+## Fault Classes
 
-The architecture is intended to support multiple controllers. Changing controller or operating region must not introduce hidden state discontinuities.
+Potential classes include:
 
-Relevant state may include:
+```text
+overcurrent / short circuit
+Port A or Port B overvoltage
+undervoltage / invalid supply condition
+ADC saturation or sensing implausibility
+HRTIM/timing/configuration fault
+estimator invalid when required by active controller
+unrealizable modulation request
+host/session policy violation
+internal deadline/health fault
+```
 
-- PI/PID integrator state;
-- filtered measurements;
-- observer state;
-- Kalman state and covariance;
-- previous duty commands;
-- reference-ramp state.
-
-Controller changes must either transfer compatible state explicitly or reinitialize it through a defined transition.
+Thresholds and response class belong to versioned configuration and test evidence, not undocumented magic constants.
 
 ## Protection Hierarchy
 
-A practical hierarchy is:
-
 ```text
-Hardware-immediate protection
-        ↓
-PWM / modulation limits
-        ↓
-Supervisor limits and state machine
-        ↓
-Control-law constraints
+1. hardware-immediate / HRTIM fault suppression
+2. modulation hard bounds and illegal-state prevention
+3. Power Manager qualification/state limits
+4. controller constraints and anti-windup
 ```
 
-Protection must not depend on the stability or correctness of a newly developed controller.
+Higher-numbered layers may not weaken lower-numbered protection.
 
-## Logging Requirements
+## Host Ownership
 
-Every fault or abnormal transition should eventually record enough context to reproduce the event:
+Host commands are requests:
 
-- state before fault;
-- fault source;
-- `Vin`, `Vout`, `Iin`, `Iout`;
-- operating region;
-- power-flow direction;
-- `D1`, `D2`;
-- reference values;
-- timestamp or sample index;
-- retry count where applicable.
+```text
+OUTPUT_ENABLE  -> request OFF -> QUALIFY
+OUTPUT_DISABLE -> request controlled SHUTDOWN
+CLEAR_FAULT    -> request policy evaluation
+```
 
-## Design Rules
+No normal protocol command directly asserts PWM enable, writes gate states, disables mandatory protection, or jumps to `REGULATION`.
 
-1. PWM starts only through an explicit state transition.
-2. Protection is independent of the selected control algorithm.
-3. Fault detection and recovery policy are separate concerns.
-4. Soft-start initializes controller state deliberately.
-5. Mode or controller changes define state-transfer behavior.
-6. Emergency shutdown and normal shutdown are distinct paths.
-7. Fault thresholds and retry behavior are measurable configuration, not hidden magic constants.
+## Controller / Estimator State Transfer
 
-## Validation Targets
+Changing controller or recovering from fault may involve:
 
-The supervisor should eventually be tested for:
+- PI/LQI integrator state;
+- observer state/covariance;
+- filter state;
+- previous `vL*`, `d1`, `d2`;
+- reference-ramp state.
 
-- power-on with valid and invalid input conditions;
-- normal enable / disable cycles;
-- repeated soft-start;
-- load applied before startup;
-- mode transition during regulation;
-- overcurrent event;
-- output short circuit;
-- input undervoltage / overvoltage;
-- output overvoltage;
-- fault retry and latched-fault behavior;
-- controller reset and state initialization after faults.
+Every change must either transfer compatible state explicitly or pass through a defined reinitialization transition. Hidden state discontinuities are not acceptable.
 
-Each test should have explicit pass/fail criteria and associated measurement evidence.
+## Fault Logging
+
+Record at least when available:
+
+```text
+timestamp/sample index
+power state
+fault bits and source
+Vin / Iin / Vout / Iout
+iL_hat + confidence
+power-flow direction
+operating region
+vL*
+d1 / d2
+references
+controller type
+retry count
+```
+
+## Minimum Prerequisite Before Energized Closed Loop
+
+Before Phase 3 energized testing, the implementation must already provide:
+
+- stable `OFF` state;
+- qualified enable path;
+- safe HRTIM inactive/disable behavior;
+- hard duty/pulse constraints;
+- at least the required immediate fault suppression path;
+- controlled shutdown;
+- telemetry indicating state/fault reason.
+
+Advanced controllers are never used as a substitute for these prerequisites.
+
+## Validation Scope
+
+Test the independent implementation delta:
+
+- reset to OFF remains inactive;
+- invalid enable stays out of switching;
+- valid enable follows QUALIFY -> SOFT_START -> REGULATION;
+- disable follows SHUTDOWN -> OFF;
+- fault overrides controller/host authority;
+- retry returns through QUALIFY;
+- latched fault remains latched;
+- controller/estimator state is reinitialized deterministically;
+- reverse/pre-biased cases cannot bypass qualification.
+
+Do not re-run the vendor’s complete protection qualification merely to prove the board can protect itself under vendor firmware.
