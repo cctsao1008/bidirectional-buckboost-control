@@ -1,0 +1,15 @@
+# Local third-party dependency checkout
+third_party/libopencm3/
+
+# Firmware build outputs
+firmware/*.o
+firmware/*.d
+firmware/*.elf
+firmware/*.bin
+firmware/*.hex
+firmware/*.list
+firmware/stm32f334c8t6.ld
+
+# Host-side transient files
+__pycache__/
+*.pyc
