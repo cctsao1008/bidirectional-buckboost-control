@@ -2,9 +2,7 @@
 
 ## Purpose
 
-This document defines the implementation baseline for the independent STM32F334 firmware.
-
-The firmware is designed as a deterministic bare-metal digital-power controller with a separate host-supervisory interface. The architecture intentionally keeps hard real-time control independent of Web, UART, logging, and other noncritical activities.
+This document defines the implementation baseline for the independent STM32F334 firmware. It describes stable layering, timing, ownership, and safety rules. Current bring-up progress belongs in GitHub Issues rather than in this document.
 
 ## Technology Baseline
 
@@ -14,93 +12,92 @@ The firmware is designed as a deterministic bare-metal digital-power controller 
 | Peripheral library | libopencm3 |
 | Numerical library | CMSIS-DSP where useful |
 | RTOS | None initially |
-| Scheduling | Interrupt-driven hard real-time + cooperative background scheduler |
-| Host transport | USART1 on PB6/PB7 |
-| Framing | COBS with `0x00` delimiter |
+| Scheduling | interrupt-driven hard real-time + cooperative background loop |
+| Host transport | USART1 PB6/PB7 |
+| Framing | COBS + `0x00` delimiter |
 | Integrity | CRC-16/CCITT-FALSE |
-| Host | Web Serial application |
+| Host clients | CLI first, Web Serial later |
 
-FreeRTOS is intentionally not part of the initial architecture. It may be reconsidered only if future firmware grows into genuinely concurrent subsystems such as networking, filesystems, storage, or multiple complex communication stacks.
+FreeRTOS is not part of the initial architecture. It may be reconsidered only if future firmware gains genuinely concurrent services such as networking, filesystems, or multiple complex communication stacks. The switching-cycle control path remains outside RTOS scheduling even if an RTOS is introduced later.
+
+## Timing Budget
+
+At 200 kHz:
+
+```text
+Tsw = 5 us
+```
+
+At a 64 MHz Cortex-M4 clock this is approximately 320 core cycles per switching period. That budget must include measurement handoff, fast controller execution, constraints, modulation, HRTIM update, and instrumentation overhead. WCET and deadline misses therefore become first-class metrics before advanced controllers are accepted.
 
 ## Timing Classes
-
-The firmware separates execution by timing criticality.
 
 ```text
 Hard real-time
 ────────────────────────
-HRTIM / PWM update
-ADC synchronization
-fast control law
+PWM/HRTIM update
+synchronized measurement handoff
+fast current/control law
+modulation hard limits
 critical fault response
 
 Soft real-time
 ────────────────────────
-power manager
-state machine
-mode management
+Power Manager
+operating-region management
+reference ramps
 slow protection
-reference management
+estimator health supervision
 
 Background
 ────────────────────────
 UART protocol
 telemetry
-Web commands
+CLI/Web requests
 diagnostics
 parameter management
+capture transfer
 ```
-
-The 200 kHz switching period is 5 µs. At a 64 MHz CPU clock this corresponds to roughly 320 core clock cycles per switching period, so execution-time measurement is mandatory for advanced controllers.
 
 ## Interrupt Policy
 
-Interrupt service routines must be short and deterministic.
+### Switching-cycle interrupt
 
-### HRTIM / control interrupt
+The switching-cycle ISR may only perform work that belongs to the fixed deadline:
 
-Responsible only for operations that belong to the switching-cycle deadline, such as:
+- consume the latest synchronized measurement set;
+- update `iL_hat` where the estimator runs at the fast rate;
+- execute the active fast controller;
+- apply current/actuation constraints;
+- execute unified modulation;
+- atomically update HRTIM compare values;
+- record bounded timing/capture metadata;
+- react to time-critical fault state when required.
 
-- consuming synchronized measurements;
-- executing the active fast control law;
-- applying current/duty constraints;
-- executing modulation;
-- updating HRTIM compare values;
-- handling time-critical fault forcing where available.
-
-The control ISR must not:
-
-- allocate memory;
-- block;
-- parse UART packets;
-- perform logging or formatting;
-- call Web/host-facing code;
-- depend on host communication.
+It must not allocate memory, block, parse UART, format strings, access host-facing code, or depend on host availability.
 
 ### USART1 RX interrupt
 
-The USART RX ISR only transfers received bytes into a single-producer/single-consumer ring buffer.
+The UART ISR only transfers received bytes to an SPSC ring buffer:
 
 ```text
 USART RXNE IRQ
       ↓
 ring_buffer_push_isr()
       ↓
-return from interrupt
+return
 ```
 
-COBS decoding, CRC checking, command dispatch, and response generation execute in background context.
+COBS decoding, CRC checking, dispatch, and response generation remain in background context.
 
 ## Main Loop
-
-The initial firmware uses a cooperative background loop.
 
 Conceptually:
 
 ```text
 while (1)
 {
-    host_protocol_service();
+    host_service_run();
     power_manager_service();
     slow_protection_service();
     telemetry_service();
@@ -108,70 +105,143 @@ while (1)
 }
 ```
 
-Periodic work may be released using timer/SysTick flags rather than RTOS tasks.
+Periodic background work is released by monotonic time flags rather than blocking delays.
 
-## Layering
+## Layering and Ownership
 
 ```text
 Application / Power Manager
         ↓
 Control / Estimation
         ↓
-Modulation
+Unified Modulation
         ↓
 Platform API
         ↓
-libopencm3
+libopencm3 / small STM32F334 helpers
         ↓
 STM32F334
 ```
 
-Host communication is parallel to, not inside, the control path:
+Host communication is parallel to the real-time path:
 
 ```text
-Web App
-   ↓
-Web Serial
-   ↓
-USB-to-UART
-   ↓
+CLI / Web App
+      ↓
+Protocol Codec
+      ↓
 USART1
-   ↓
-COBS + CRC protocol
-   ↓
+      ↓
 Power Manager / Telemetry
 ```
 
-## Platform Layer
+### `firmware/app`
 
-Only the platform layer should depend directly on libopencm3 register/peripheral APIs.
+Owns application composition and background services. It does not own direct PWM authority.
 
-Initial platform responsibilities include:
+### `firmware/control`
 
-- system clock configuration;
-- GPIO;
-- USART1;
-- ADC triggering/acquisition;
-- HRTIM/PWM;
-- timing/cycle measurement;
-- local keys/LEDs where needed.
+Owns estimators and controller implementations. Controllers operate on calibrated physical quantities and logical actuation requests. They never write timer registers.
 
-If a required STM32F334 HRTIM feature is not fully covered by libopencm3, a small register-level implementation may be added inside the platform layer rather than leaking hardware details into control code.
+### `firmware/power`
 
-## Protocol Layer
+Owns power-domain data structures such as calibrated measurements, references, derived power quantities, and other hardware-independent converter abstractions.
 
-The protocol layer is MCU-independent C code and should remain host-testable.
+### `firmware/platform`
 
-Current implementation components:
+Owns STM32F334 clocks, GPIO, UART, ADC/DMA, HRTIM, timing counters, and all direct libopencm3/register access. If libopencm3 lacks required F334 HRTIM coverage, a minimal register-level helper belongs here.
+
+### `firmware/protocol`
+
+Owns MCU-independent COBS framing, CRC, packet format, and stream parsing. It remains host-unit-testable.
+
+### `firmware/safety`
+
+Owns fault evaluation, Power Manager state, qualification, shutdown, and policy that must remain independent of the selected controller.
+
+## Canonical Control Path
+
+All notation follows `control-conventions.md`:
 
 ```text
-firmware/protocol/
-├── cobs.c / cobs.h
-├── crc16.c / crc16.h
-└── protocol.c / protocol.h
+PWM-synchronized ADC/DMA
+        ↓
+calibration / scaling
+        ↓
+Vin / Iin / Vout / Iout
+        ↓
+iL estimator
+        ↓
+iL_hat
+        ↓
+outer voltage / energy controller
+        ↓
+iL_ref
+        ↓
+inner current controller
+        ↓
+vL*
+        ↓
+unified modulation
+        ↓
+d1 / d2
+        ↓
+platform HRTIM API
 ```
 
-Receive path:
+The board has no direct `iL` ADC channel and the target architecture does not add one.
+
+## Controller Implementation Order
+
+The roadmap order is:
+
+```text
+synchronized measurement
+        ↓
+iL estimator
+        ↓
+cascaded voltage/current PI
+        ↓
+unified vL* -> d1/d2 modulation
+        ↓
+unified bidirectional operation
+        ↓
+LQI
+        ↓
+Deadbeat Predictive Current Control
+        ↓
+Super-Twisting SMC
+        ↓
+constrained / reduced MPC
+```
+
+This is not a requirement that every controller be implemented before the next can be investigated; it defines dependency order. Advanced control cannot bypass measurement, estimator, modulation, protection, or timing prerequisites.
+
+## HRTIM Ownership Rule
+
+Power-stage GPIOs begin in a safe-low GPIO state. HRTIM configuration does not imply switching authority.
+
+Required ownership sequence:
+
+```text
+GPIO safe-low
+   ↓
+configure HRTIM timebase / polarity / dead time / faults
+   ↓
+force HRTIM outputs inactive
+   ↓
+switch pins to HRTIM alternate function
+   ↓
+verify inactive behavior
+   ↓
+Power Manager qualification
+   ↓
+explicit enable
+```
+
+## Host Protocol Boundary
+
+The transport path is:
 
 ```text
 USART IRQ
@@ -180,107 +250,42 @@ RX ring buffer
     ↓
 protocol stream collector
     ↓
-0x00 delimiter
-    ↓
-COBS decode
-    ↓
-version / length validation
-    ↓
-CRC16 validation
+COBS / version / length / CRC validation
     ↓
 command dispatch
 ```
 
-Protocol corruption must never alter converter control state.
+Protocol corruption must never alter converter state. Write commands become Power Manager/reference requests only after full validation.
 
-## Control Layer
-
-The controller must not write HRTIM registers directly.
-
-Intended long-term structure:
-
-```text
-Measurements
-    ↓
-Calibration
-    ↓
-State reconstruction
-    ↓
-Controller
-    ↓
-physical/normalized control request
-    ↓
-Unified modulation
-    ↓
-Platform PWM API
-```
-
-The hardware provides Vin, Iin, Vout, and Iout sensing but no dedicated main-inductor current ADC channel. No additional current sensor is part of the target architecture. Controllers that require `iL` must use a reconstructed state `iL_hat`.
+The first physical host client is intentionally a simple Windows-side CLI because it isolates UART/protocol bring-up from browser/Web Serial variables. Web Serial is a later experiment-platform layer, not a prerequisite for firmware bring-up.
 
 ## Numerical Library Policy
 
-CMSIS-DSP is treated as a numerical primitive library, not as the control architecture.
+CMSIS-DSP is a primitive library, not the controller architecture. Appropriate uses include filtering, matrices, observers, statistics, and optimized arithmetic. Controller code remains project-owned so saturation, anti-windup, state transfer, instrumentation, and benchmarking are consistent.
 
-Suitable uses include:
+## Parameter Update Policy
 
-- filtering;
-- matrix operations;
-- state observers;
-- optimized arithmetic;
-- statistics and signal analysis where appropriate.
-
-Controller implementations remain project-owned so that saturation, anti-windup, state transfer, instrumentation, and benchmarking are consistent across algorithms.
-
-## Controller Roadmap
-
-The implementation order is driven by hardware observability and computational feasibility:
+Control parameters must not change partially during a switching-cycle computation. Host-visible configuration should follow:
 
 ```text
-reference voltage-loop baseline
-        ↓
-current observability / state reconstruction
-        ↓
-cascaded voltage-current PI
-        ↓
-LQI + observer
-        ↓
-unified modulation refinement
-        ↓
-Super-Twisting SMC
-        ↓
-deadbeat predictive current control
-        ↓
-explicit / reduced predictive MPC
+shadow parameters
+      ↓
+validation
+      ↓
+atomic/safe-point commit
+      ↓
+active parameters
 ```
 
-Generic online constrained QP-based MPC at the 200 kHz switching rate is not an initial target for the STM32F334.
+Persistent calibration/configuration should later include versioning, CRC/integrity, and deterministic defaults.
 
 ## Safety Rules
 
 1. Host commands are supervisory requests only.
-2. `OUTPUT_ENABLE` must enter Power Manager qualification and soft-start; it must never directly enable PWM.
-3. Mandatory protection cannot be disabled through the normal host protocol.
-4. UART loss must not remove local protection.
-5. Safe HRTIM output forcing must be validated before closed-loop power testing.
-6. The gate-driver `DISABLE` pins are not MCU-controlled on the V1.2 hardware, so firmware safety cannot assume a dedicated driver-disable line.
-7. PWM polarity, complementary timing, dead time, and bootstrap constraints must be proven at low risk before applying significant bus power.
-
-## Current Bring-Up Gate
-
-The first firmware gate is host communication with the power stage inactive.
-
-```text
-USART1 RX/TX
-      ↓
-RX ring buffer
-      ↓
-COBS framing
-      ↓
-CRC16 validation
-      ↓
-PING / GET_INFO / GET_STATUS
-```
-
-Acceptance for this gate does not require PWM operation.
-
-The initial objective is to prove a robust Browser ↔ USB-UART ↔ STM32F334 communication path before integrating power-control commands.
+2. `OUTPUT_ENABLE` passes through Power Manager qualification and soft-start.
+3. Mandatory protection cannot be bypassed by normal host commands or controller selection.
+4. UART loss cannot remove local protection.
+5. Gate-driver `DISABLE` is not MCU-controlled on V1.2; firmware must own safe HRTIM forcing correctly.
+6. PWM polarity, complementary timing, effective non-overlap, and minimum pulse behavior are verified as implementation deltas before significant bus power is applied.
+7. No dynamic allocation, blocking I/O, mutex, logging, or formatting is permitted in the 200 kHz path.
+8. Every advanced controller must publish WCET/deadline evidence over its intended operating envelope.
