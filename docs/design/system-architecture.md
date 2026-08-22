@@ -2,126 +2,131 @@
 
 ## Purpose
 
-This document defines the high-level architecture of the bidirectional buck-boost control platform. It sits between the project-level intent in `README.md` and the detailed implementation in firmware, models, tests, and results.
+This document defines the high-level architecture and ownership boundaries of the bidirectional buck-boost control platform. Detailed signs, hardware facts, state-machine enums, modulation rules, and wire formats are owned by their dedicated design documents listed in `docs/design/README.md`.
 
-The architecture is organized around one principle: the physical converter is the source of truth. Models, control laws, and software abstractions must remain traceable to measurable converter behavior.
+The architecture follows two principles:
+
+> **The physical converter is the source of truth.**
+
+> **Validate the implementation delta, not the vendor-proven baseline.**
 
 ## System Boundary
 
-The controlled system includes more than the ideal four-switch power stage. The effective plant includes:
+The controlled system includes more than the ideal four-switch stage. The effective plant and implementation boundary include:
 
-- the synchronous four-switch bidirectional buck-boost topology;
-- the main inductor and port capacitances;
-- MOSFET and gate-driver behavior;
-- sensing gains, offsets, and analog filtering;
-- PWM timing and dead time;
-- operating-region transitions;
-- supervisory logic such as startup, shutdown, and fault handling.
+- two synchronous half bridges and the main inductor;
+- port capacitances and source/load interaction;
+- MOSFET/gate-driver timing and loss;
+- voltage/current sensing and analog filtering;
+- ADC sample timing and conversion latency;
+- HRTIM actuation timing and dead time;
+- operating-region allocation;
+- Power Manager startup/shutdown behavior;
+- protection and fault forcing.
 
-The project does not treat the converter as a single ideal transfer function detached from these implementation details.
+## Canonical Physical Mapping
 
-## Architecture Layers
+The V1.2 hardware mapping is:
+
+```text
+Port A / left                         Port B / right
+
+      Q1 high                              Q2 high
+         |                                    |
+         +----------- L1 = 22 uH -------------+
+         |                                    |
+      Q4 low                               Q3 low
+         |                                    |
+        GND----------------------------------GND
+```
+
+All project-owned firmware and documentation use this mapping. `hardware-specification.md` owns the full board facts.
+
+## Canonical Control Path
 
 ```text
 Physical Power Stage
         ↓
-Sensing / Signal Conditioning
+ADC / Signal Conditioning
         ↓
-Scaling / State Reconstruction
+Calibration / Scaling
         ↓
-Control Law
+Vin / Iin / Vout / Iout
         ↓
-Modulation / Operating-Region Logic
+State Estimation
         ↓
-PWM / Gate Drive
+iL_hat + estimator health
+        ↓
+Outer Voltage / Energy Controller
+        ↓
+iL_ref
+        ↓
+Inner Current Controller
+        ↓
+vL*
+        ↓
+Unified Control Allocation / Modulation
+        ↓
+d1 / d2
+        ↓
+HRTIM / Gate Drive
         ↓
 Physical Power Stage
 ```
 
-Supervisory control operates across this loop and is responsible for enabling, startup, mode transitions, shutdown, and fault recovery.
-
-## Power Stage
-
-The hardware is a four-switch non-isolated bidirectional buck-boost converter built from two synchronous half bridges connected through a single inductor.
-
-- Left half-bridge: Q1 high-side / Q4 low-side
-- Right half-bridge: Q2 high-side / Q3 low-side
-- Main inductor: 22 µH nominal
-- Switching frequency: 200 kHz nominal
-
-This mapping follows the V1.2 schematic and MCU PWM routing and is the implementation source of truth.
-
-The same power stage supports energy flow in either direction.
-
-## Operating Regions
-
-For forward power flow, the reference implementation uses three operating regions:
-
-| Condition | Region |
-| --- | --- |
-| `Vout < 0.8 × Vin` | Buck |
-| `0.8 × Vin ≤ Vout ≤ 1.2 × Vin` | Mixed buck-boost |
-| `Vout > 1.2 × Vin` | Boost |
-
-In the reference mixed-mode strategy, the buck-side duty ratio is held near `D1 = 0.8` while the boost-side duty ratio `D2` is adjusted, with the ideal relationship:
+The key averaged actuation relation is:
 
 ```text
-Vout / Vin = D1 / (1 - D2)
+L diL/dt = d1 Vin - (1 - d2) Vout
 ```
 
-This is treated as a reference modulation strategy rather than a permanent architectural constraint. Later control methods may use different duty-allocation policies.
+The controller is therefore organized around desired average inductor voltage `vL*`; Buck/Mixed/Boost realization belongs to modulation.
 
-## Measurement Architecture
+## Measurement and Estimation Boundary
 
-The converter measures both voltage and current at the two power ports.
-
-The current channels are bidirectional and are centered around a 1.65 V bias before entering the MCU ADC. The analog conditioning path and output RC filters are considered part of the effective measurement plant and must be characterized.
-
-Measurement handling is separated into:
+The board measures `Vin`, `Iin`, `Vout`, and `Iout`, but not `iL` directly. The target architecture does not add an inductor-current sensor.
 
 ```text
-raw ADC acquisition
+PWM-synchronized ADC/DMA
         ↓
-offset / gain calibration
+calibrated signed measurements
         ↓
-engineering-unit scaling
+model predictor + residual correction
         ↓
-optional filtering / estimation
-        ↓
-controller state inputs
+iL_hat / confidence
 ```
 
-The board does not provide a dedicated ADC channel for main-inductor current. If a controller requires `iL`, it must use a reconstructed state derived from the existing Vin/Iin/Vout/Iout measurements and converter state. No additional current sensor is assumed by the project architecture.
+`Iin` and `Iout` are terminal currents, not unconditional instantaneous `iL` measurements.
 
-## Control Architecture
+## Controller Boundary
 
-Control laws are intentionally separated from hardware-specific PWM and ADC code.
+Controllers consume logical physical quantities and produce a logical actuation objective. They do not:
 
-The control layer may contain classical, state-space, optimal, observer-based, nonlinear, or predictive controllers, but each controller must use a common plant interface and be evaluated under a common test protocol.
+- write HRTIM registers;
+- decide GPIO alternate-function ownership;
+- bypass minimum-pulse/dead-time/bootstrap limits;
+- enable the power stage;
+- override protection.
 
-The architecture should allow the controller to be replaced without redefining the measurement conventions, operating-point definitions, or experimental metrics.
+The independent baseline is cascaded voltage/current PI. Advanced comparison targets are LQI, Deadbeat Predictive Current Control, Super-Twisting SMC, and constrained/reduced MPC.
 
-## Modulation and PWM
+## Modulation Boundary
 
-The modulation layer converts controller outputs into valid half-bridge commands.
+The modulation layer owns:
 
-Its responsibilities include:
+- conversion of `vL*` into realizable `d1` / `d2`;
+- Buck/Mixed/Boost region policy;
+- duty and pulse-width limits;
+- bootstrap refresh;
+- bounded/bumpless region transitions;
+- hardware-realizable complementary switching requests;
+- saturation feedback needed by anti-windup.
 
-- duty-ratio constraints;
-- operating-region selection;
-- complementary output generation;
-- effective dead-time handling;
-- safe transitions between buck, mixed, and boost operation;
-- bootstrap-refresh and minimum-pulse constraints;
-- preventing invalid simultaneous switch states.
+The vendor 0.8/1.2 region boundaries and mixed-mode strategy are reference evidence, not permanent architectural constraints.
 
-The effective gate timing is a combined property of MCU PWM generation, gate-driver behavior, propagation delay, gate resistance, MOSFET switching behavior, and hardware dead-time mechanisms.
+## Power Manager Boundary
 
-## Supervisory State Machine
-
-The converter should be controlled through explicit system states rather than by enabling closed-loop PWM immediately after reset.
-
-A suitable high-level state model is:
+The Power Manager is the authority for whether switching is allowed. Canonical externally visible states are defined in `protection-and-state-machine.md`:
 
 ```text
 OFF
@@ -132,77 +137,92 @@ SOFT_START
  ↓
 REGULATION
  ↓
-FAULT
+SHUTDOWN
  ↓
-RETRY / OFF
+OFF
 ```
 
-Exact transitions and thresholds will be defined from hardware characterization and independent implementation requirements.
+Fault paths may enter `FAULT` and, when policy allows, `RETRY_WAIT` before re-qualification.
 
-## Protection Architecture
+Boot/reset is an internal initialization condition, not a reason to expose an unsafe partially initialized converter state.
 
-Protection is part of the control architecture, not an afterthought.
+## Protection Boundary
 
-The design must account for:
+Protection is layered and independent of the selected controller:
 
-- shoot-through prevention;
-- overcurrent protection;
-- overvoltage protection;
-- input undervoltage / overvoltage qualification;
-- safe shutdown;
-- reverse energy flow;
-- startup current and duty limiting;
-- hardware-assisted fault response where available.
+```text
+hardware-immediate / HRTIM output suppression
+        ↓
+modulation hard limits
+        ↓
+Power Manager qualification and state policy
+        ↓
+controller constraints
+```
 
-No software control experiment should bypass the minimum hardware-safety mechanisms required to protect the power stage.
+A controller experiment is never allowed to become the sole mechanism preventing hardware damage.
+
+## Bidirectional Operation
+
+Port identities never swap:
+
+```text
+Port A = left / schematic VIN side
+Port B = right / schematic VOUT side
+```
+
+Direction changes are represented by signed current/power, references, estimator state, Power Manager policy, and modulation. The same ADC channels, physical switch mapping, and control abstraction remain valid in both directions.
+
+The target is one firmware image for A→B and B→A energy transfer.
 
 ## Host and Instrumentation Boundary
 
-Host control is supervisory only:
+Host software is supervisory:
 
 ```text
-Web Browser
-    ↓
-Web Serial
-    ↓
-USB-to-UART
-    ↓
-COBS + CRC protocol
-    ↓
+CLI or Browser
+      ↓
+Device / Protocol API
+      ↓
+COBS + CRC16
+      ↓
+USB-UART / USART1
+      ↓
 Power Manager / Telemetry
 ```
 
-The browser must not participate in switching-cycle control. Communication loss must not remove local protection or make PWM timing dependent on host timing.
+The Windows-side CLI is appropriate for first physical UART validation. Web Serial is the later experiment-platform client. Neither is part of the 200 kHz real-time loop.
+
+High-rate transient capture is MCU-timestamped and buffered locally; browser timing is never used as measurement timing.
 
 ## Model-to-Hardware Loop
 
-The architecture uses continuous model validation:
+Model work exists only to support the new estimator/control/modulation questions:
 
 ```text
-Physical Plant
-      ↓
-Measurement
-      ↓
-Model Identification / Validation
-      ↓
-Controller Design
-      ↓
-Implementation
-      ↓
-Hardware Test
-      ↓
-Model Update
-      ↺
+select operating condition
+        ↓
+model / predict
+        ↓
+simulate or calculate
+        ↓
+measure only required implementation delta
+        ↓
+compare quantitative metrics
+        ↓
+update model / assumptions
 ```
 
-A model is accepted only when its predictive accuracy is sufficient for the control question being studied.
+The project does not perform broad characterization merely to duplicate vendor evidence.
 
-## Design Rule
+## Design Intent, Implementation, Evidence
 
-The project separates three concerns:
+Every significant subsystem should keep these separate:
 
-- **design intent** — what the system is supposed to do;
-- **implementation** — how firmware and hardware execute that intent;
-- **evidence** — measurements and tests that show whether the implementation matches the design.
+```text
+design intent    what must happen
+implementation   how firmware/hardware does it
+evidence         measurements/tests proving the delta
+```
 
-GitHub stores the independently developed and reproducible project artifacts. Private vendor reference material and raw archival evidence remain outside the public repository.
+This separation is the basis for repeatable controller comparison and safe iteration.
