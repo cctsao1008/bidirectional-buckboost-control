@@ -13,3 +13,6 @@ firmware/stm32f334c8t6.ld
 # Host-side transient files
 __pycache__/
 *.pyc
+
+# Generated libopencm3 linker script
+firmware/generated.stm32f334c8t6.ld
