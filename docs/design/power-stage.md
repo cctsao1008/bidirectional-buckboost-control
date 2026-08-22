@@ -1,218 +1,167 @@
 # Power Stage
 
-## Scope
+## Purpose
 
-This document defines the independently reconstructed power-stage model used by the project. It summarizes public engineering facts needed for control design without redistributing vendor documentation.
+This document defines the project-owned control model of the CBB024D V1.2 four-switch power stage. `hardware-specification.md` owns detailed board facts; this file focuses on the physical topology and equations required by control, estimation, and modulation.
 
-## Topology
+The board is already vendor-proven to operate. Model validation is performed only when required by a new estimator, controller, modulation strategy, or protection function.
 
-The converter is a four-switch non-isolated synchronous bidirectional buck-boost stage composed of two half bridges connected through a single inductor.
+## Physical Topology
+
+The converter is a four-switch non-isolated synchronous bidirectional buck-boost stage with two half bridges connected through one inductor:
 
 ```text
-Port A ─ Half-Bridge A ─ L ─ Half-Bridge B ─ Port B
+Port A / left                         Port B / right
+
+      Q1 high                              Q2 high
+         |                                    |
+         +----------- L1 = 22 uH -------------+
+         |                                    |
+      Q4 low                               Q3 low
+         |                                    |
+        GND----------------------------------GND
 ```
 
-Switch assignment:
+**Canonical V1.2 half-bridge mapping:**
 
-| Device | Role |
-| --- | --- |
-| Q1 | Half-Bridge A high-side MOSFET |
-| Q2 | Half-Bridge A low-side MOSFET |
-| Q4 | Half-Bridge B high-side MOSFET |
-| Q3 | Half-Bridge B low-side MOSFET |
+| Bridge | High-side | Low-side | PWM signals |
+| --- | --- | --- | --- |
+| Left / Port A | Q1 | Q4 | `PWM1H`, `PWM1L` |
+| Right / Port B | Q2 | Q3 | `PWM2H`, `PWM2L` |
 
-Nominal main power-stage parameters:
+This correct mapping must be used everywhere. Older conceptual vendor diagrams that imply Q1/Q2 and Q4/Q3 pairings do not represent the physical V1.2 half bridges.
+
+## Nominal Parameters
 
 | Parameter | Value |
 | --- | --- |
 | Input range | 12–48 VDC |
 | Output range | 5–48 VDC |
 | Rated operating point | 24 V / 5 A |
-| Maximum power | 200 W |
+| Suggested maximum power | 200 W |
 | Switching frequency | 200 kHz |
 | Main inductor | 22 µH nominal, ±20 % |
-| Inductor DCR | 20.5 mΩ typ |
-| Bulk capacitance | 2 × 220 µF per port |
-| Current shunt | 1 mΩ |
+| Inductor DCR | about 20.5 mΩ typ reference value |
+| Bulk capacitance | 2 × 220 µF per port, plus local ceramics |
+| Terminal-current shunts | 1 mΩ |
 | MOSFET | BSC070N10NS3G |
+| Gate driver | Si8233BD-D-IS |
 
-## Forward Buck Operation
+Nominal values are starting parameters, not identified truth.
 
-When the output voltage is substantially below the input voltage, Half-Bridge A is the actively modulated buck leg.
+## Canonical Averaged Model
 
-The ideal CCM relationship is:
-
-```text
-Vout / Vin ≈ D
-```
-
-During the high-side interval, the inductor voltage is approximately:
+All signs and duty variables follow `control-conventions.md`:
 
 ```text
-VL = Vin - Vout
+d1 = average on-time fraction of Q1, left high-side
+d2 = average on-time fraction of Q3, right low-side
+iL > 0 from Port A to Port B
 ```
 
-During the freewheel interval:
+Ideal averaged equations:
 
 ```text
-VL = -Vout
+Cin  dVin/dt  = Iin - d1 iL
+L    diL/dt   = d1 Vin - (1 - d2) Vout
+Cout dVout/dt = (1 - d2) iL - Iout
 ```
 
-The opposite half bridge is held in a state compatible with synchronous conduction and bootstrap requirements rather than being treated as an ideal static wire.
-
-## Forward Boost Operation
-
-When the output voltage is substantially above the input voltage, Half-Bridge B is the actively modulated boost leg.
-
-The ideal CCM relationship is:
+The central actuation equation is:
 
 ```text
-Vout / Vin ≈ 1 / (1 - D)
+vL = d1 Vin - (1 - d2) Vout
 ```
 
-During inductor charging:
+At ideal steady state:
 
 ```text
-VL = Vin
+Vout / Vin = d1 / (1 - d2)
 ```
 
-During energy transfer to the output:
+This equation is the common control-allocation backbone for Buck, Mixed, Boost, and reverse power flow.
+
+## Forward Buck-Like Operation
+
+When Port B voltage is sufficiently below Port A voltage, an efficient allocation typically modulates the left bridge while the right bridge remains near a pass-through state compatible with synchronous conduction and bootstrap constraints.
+
+Ideal relation:
 
 ```text
-VL = Vin - Vout
+Vout / Vin ≈ d1
 ```
 
-## Mixed Buck-Boost Operation
+The exact gate state is owned by the modulation layer, not by this plant model.
 
-When the two port voltages are close, both half bridges participate in switching.
+## Forward Boost-Like Operation
 
-Using buck-side duty `D1` and boost-side duty `D2`, the ideal conversion ratio is:
+When Port B voltage is sufficiently above Port A voltage, an efficient allocation typically modulates the right bridge while the left bridge remains near the corresponding pass-through state.
+
+Ideal relation under the project duty convention:
 
 ```text
-Vout / Vin = D1 / (1 - D2)
+Vout / Vin ≈ 1 / (1 - d2)
 ```
 
-The known reference implementation uses approximately:
+## Mixed Operation
+
+When both bridges participate:
 
 ```text
-D1 = 0.8
+Vout / Vin = d1 / (1 - d2)
 ```
 
-and varies `D2` to regulate the output in the mixed region.
-
-This project treats that strategy as a baseline, not as a requirement for later controllers.
-
-## Operating-Region Baseline
-
-The reference forward mode scheduler uses:
-
-| Voltage relationship | Operating mode |
-| --- | --- |
-| `Vout < 0.8 × Vin` | Buck |
-| `0.8 × Vin ≤ Vout ≤ 1.2 × Vin` | Mixed buck-boost |
-| `Vout > 1.2 × Vin` | Boost |
-
-Future scheduling logic may introduce hysteresis, bumpless transfer, gain scheduling, or alternative modulation policies. Those changes must be justified by measured behavior.
+Vendor reference firmware uses a known-good mixed-mode allocation near `d1 ≈ 0.8` while varying the other leg. This is reference evidence only; the project’s unified allocator is free to choose a different realizable pair.
 
 ## Bidirectional Operation
 
-The power stage is electrically symmetric enough to support power flow in either direction. The two physical ports therefore should not be hard-coded conceptually as permanently fixed source and load roles.
-
-A useful control abstraction is:
+The physical stage supports current in either direction. Port identities never swap:
 
 ```text
-source_port
-sink_port
-power_flow_direction
-voltage_ratio
-operating_region
+Port A = left physical terminal
+Port B = right physical terminal
 ```
 
-rather than separate unrelated forward and reverse implementations.
+Reverse operation is represented by signed current/power and signed controller objectives, not by redefining the bridge mapping.
 
-## Main Inductor
+## Energy Storage and Loss Terms
 
-Nominal values currently used by the project:
+The model hierarchy may add the following only when they materially improve prediction for the problem being studied:
 
-```text
-L_nom = 22 µH
-L_tol = ±20 %
-DCR_typ = 20.5 mΩ
-```
+- inductor DCR and saturation-dependent inductance;
+- capacitor ESR/effective capacitance;
+- MOSFET `RDS(on)` and temperature dependence;
+- dead-time voltage error;
+- switching loss;
+- source/load impedance;
+- sensing delay and filter dynamics.
 
-The inductor is not modeled as ideal. Control and robustness work should account for:
+A more complicated model is not automatically better; each added term must have traceable parameters and a measurable purpose.
 
-- inductance tolerance;
-- DCR;
-- temperature rise;
-- saturation-related inductance reduction;
-- current ripple and peak current.
+## Dead Time and Commutation
 
-## Port Capacitance
-
-Each port uses two 220 µF bulk capacitors together with smaller ceramic capacitors for higher-frequency decoupling.
-
-For control modeling, the effective capacitance and ESR should be measured or bounded rather than inferred from nominal capacitance alone.
-
-## Main MOSFETs
-
-The initial hardware uses BSC070N10NS3G MOSFETs.
-
-Selected nominal device data used for engineering estimates include:
-
-```text
-VDS_max      = 100 V
-RDS(on)_typ  = 6.3 mΩ
-Qg_typ       = 42 nC
-```
-
-Datasheet switching times are test-condition dependent and are not assumed to equal the actual board switching times. Gate resistance, driver impedance, layout, parasitics, current, and bus voltage all affect real transitions.
-
-## Switching Loss and Conduction Loss
-
-A first-order loss model can separate:
-
-```text
-P_total ≈ P_conduction + P_switching + P_gate + P_inductor + P_misc
-```
-
-with conduction loss estimated from RMS current and temperature-dependent `RDS(on)`, while switching loss must ultimately be correlated with measured voltage/current overlap.
-
-## Dead Time
-
-Dead time is a system-level quantity, not only a timer register value.
-
-Effective non-overlap depends on:
-
-- MCU PWM timing;
-- gate-driver dead-time insertion and propagation mismatch;
-- gate resistance;
-- MOSFET charge behavior;
-- parasitic capacitance and diode recovery;
-- operating voltage and current.
-
-The design target is therefore **measured effective dead time at the switching devices**, not merely a programmed digital delay.
+Effective commutation is determined by HRTIM timing, Si8233 behavior, propagation mismatch, gate resistance, MOSFET charge, diode/body-diode conduction, parasitics, and operating point. `gate-drive-and-timing.md` owns the timing requirements.
 
 ## Model Hierarchy
 
-The power stage will be represented at several levels:
+The project may use:
 
-1. switching model;
-2. averaged large-signal model;
-3. operating-point small-signal model;
-4. state-space model;
-5. parameter-uncertainty model.
+1. switching model for commutation/ripple questions;
+2. averaged large-signal model for estimator and nonlinear control;
+3. operating-point small-signal model for local loop analysis;
+4. discrete-time state-space model for digital control;
+5. uncertainty/identified corrections when data justifies them.
 
-Each abstraction is used only where its assumptions remain valid.
+## Validation Boundary
 
-## Validation Targets
+Do not perform a broad campaign to prove that the vendor power stage can Buck, Boost, or operate bidirectionally; that capability is already established.
 
-Power-stage reconstruction should be validated against real measurements including:
+Measure only what a new implementation needs, for example:
 
-- gate-drive timing;
-- switching-node waveforms;
-- inductor-current slopes and ripple;
-- output-voltage ripple;
-- buck / mixed / boost transitions;
-- line and load transients;
-- power-flow reversal where safely supported.
+- actual acquisition/actuation timing;
+- model parameters that materially affect `iL_hat`;
+- new modulation transition behavior;
+- effective constraints needed for safe HRTIM operation;
+- controller-specific transient metrics.
+
+Any development-only external inductor-current probe is validation instrumentation, not part of the final sensing architecture.
