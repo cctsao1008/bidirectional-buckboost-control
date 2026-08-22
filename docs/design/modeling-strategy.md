@@ -2,303 +2,234 @@
 
 ## Purpose
 
-This document defines how analytical, simulation, and identified models are used in the project.
+This document defines how analytical, switching, averaged, small-signal, state-space, discrete-time, and identified models are used in the project.
 
-The goal is not to maintain one abstract converter model and assume it is correct everywhere. The four-switch converter changes switching behavior and effective plant dynamics across buck, mixed, and boost operation, so models must be associated with operating conditions and validated against hardware.
+Models exist to answer a control/estimation question. The project does not build or validate models merely to duplicate vendor demonstrations.
 
-## Modeling Layers
+## Canonical Large-Signal Backbone
 
-The project uses several model layers, each serving a different purpose:
+For estimation and unified control, the canonical ideal averaged state is:
+
+```text
+x = [ Vin, iL, Vout ]^T
+```
+
+with terminal currents and duties treated as measured/known inputs:
+
+```text
+u = [ Iin, Iout, d1, d2 ]
+```
+
+Using `control-conventions.md`:
+
+```text
+Cin  dVin/dt  = Iin - d1 iL
+L    diL/dt   = d1 Vin - (1 - d2) Vout
+Cout dVout/dt = (1 - d2) iL - Iout
+```
+
+This three-state form is the canonical model for the `iL_hat` observer and unified `vL*` actuation architecture.
+
+Reduced models are allowed when their assumptions are explicit. For example, if Port A is sufficiently stiff for a specific local controller design, `Vin` may be treated as a measured disturbance rather than a dynamic state. Such a reduction is not the project-wide definition of the plant.
+
+## Model Layers
 
 ```text
 Switching model
     ↓
-Averaged model
+Averaged large-signal model
     ↓
-Small-signal model
+Operating-point / small-signal model
     ↓
-State-space model
+State-space controller/observer model
     ↓
 Discrete-time implementation model
     ↓
 Measured / identified correction
 ```
 
-No single layer replaces the others.
+No layer replaces the others.
 
 ## Switching Model
 
-The switching model represents the actual bridge states, PWM timing, inductor, capacitors, and relevant parasitics.
+Use when the question depends on actual bridge states or switching timing, for example:
 
-It is useful for studying:
-
-- switching-node behavior;
-- inductor ripple;
-- mode transitions;
+- ripple and current slope;
 - dead-time effects;
-- current stress;
-- ripple and commutation behavior.
+- minimum pulse constraints;
+- ADC quiet-window selection;
+- mode/allocation transitions;
+- commutation stress.
 
-The known-good reference simulations are useful comparison material, but independently created models should become the public, reproducible source for project analysis.
+The switching model should use the V1.2 physical mapping Q1/Q4 left and Q2/Q3 right.
 
 ## Averaged Model
 
-The averaged model removes individual switching events while preserving the dominant energy-storage dynamics.
+Use for:
 
-Nominal state variables are expected to include at least:
+- energy flow;
+- nonlinear state prediction;
+- `iL_hat` estimation;
+- `vL*`-oriented control design;
+- control-allocation reasoning;
+- large-signal operating-envelope studies.
 
-```text
-x = [ iL, vC ]ᵀ
-```
+The averaged model removes individual switching events but does not imply that PWM timing or sensing delay is irrelevant to the implemented controller.
 
-with additional states introduced only when they materially improve prediction, for example sensor filtering or other dominant dynamics.
+## Operating-Point and Small-Signal Models
 
-The averaged model is the starting point for operating-point analysis and many classical-control calculations.
-
-## Operating-Point Models
-
-Buck, mixed, and boost regions should not automatically be treated as one invariant linear plant.
-
-For each relevant operating point, record at least:
-
-- `Vin`;
-- `Vout`;
-- load or output current;
-- power-flow direction;
-- operating region;
-- `D1` and `D2`;
-- switching frequency;
-- model parameters used.
-
-This provides the basis for gain scheduling and for understanding where one controller design ceases to represent the plant adequately.
-
-## Small-Signal Model
-
-Linearization around a steady operating point provides transfer functions or equivalent state-space perturbation models for controller design.
-
-Typical perturbation quantities may include:
+Linearize only around stated conditions. Every local model should record:
 
 ```text
-îL
-v̂out
-d̂1
-d̂2
-v̂in
-îload
+Vin
+Vout
+Iin/Iout or load
+power-flow direction
+operating region
+d1 / d2
+switching frequency
+controller/sample rate
+parameter set
 ```
 
-The exact input/output pairing depends on the controller being designed.
+Small-signal models may support PI design, bandwidth/phase-margin analysis, local gain scheduling, or comparison with measured response. Vendor PI/PID/Type-III examples are reference evidence, not required project milestones.
 
-Small-signal models are expected to support:
+## State-Space Models
 
-- PI/PID tuning;
-- Type-III compensation;
-- loop-gain analysis;
-- bandwidth and phase-margin studies;
-- comparison with measured frequency response where practical.
-
-## State-Space Model
-
-A continuous-time representation has the general form:
+General form:
 
 ```text
-ẋ = A x + B u + E d
-y  = C x + D u
+x_dot = A x + B u + E d
+y     = C x + D u
 ```
 
-where:
+The model must explicitly define:
 
-- `x` contains plant states;
-- `u` contains manipulated inputs such as duty commands;
-- `d` contains disturbances such as input-voltage or load variation;
-- `y` contains measured or controlled outputs.
+- state vector;
+- manipulated input (`vL*`, `d1/d2`, or another representation);
+- measured disturbances;
+- outputs;
+- operating point and direction;
+- whether modulation dynamics are included or abstracted.
 
-The model should explicitly state whether `u` contains one active duty variable or both `D1` and `D2`.
+State-space models support observability/controllability analysis, LQI, observers, Kalman methods, and MPC.
 
-State-space models support:
+## Discrete-Time Implementation Model
 
-- controllability and observability analysis;
-- pole placement;
-- LQR;
-- observers;
-- Kalman estimation / LQG;
-- MPC;
-- gain-scheduled control.
-
-## Measurement Dynamics
-
-The controller does not observe ideal plant states directly.
-
-Voltage and current measurements pass through:
-
-```text
-physical quantity
-    ↓
-shunt / divider
-    ↓
-analog amplifier
-    ↓
-RC filtering
-    ↓
-ADC sample timing
-    ↓
-digital scaling / filtering
-```
-
-Where measurement dynamics are significant relative to control bandwidth, they should be included in the effective model or handled explicitly in estimator design.
-
-## Discrete-Time Model
-
-The implemented controller operates at a finite sample rate with finite computation and actuation delay.
-
-A discrete representation may be written as:
+The implementation operates with finite sample and actuation delay:
 
 ```text
 x[k+1] = Ad x[k] + Bd u[k] + Ed d[k]
 y[k]   = Cd x[k] + Dd u[k]
 ```
 
-The discretization must specify:
+Every digital model used for controller implementation should specify:
 
-- sampling period;
-- PWM update convention;
-- ADC sample phase;
-- computation delay;
-- zero-order-hold or other discretization assumption.
+```text
+sample period
+PWM update convention
+ADC trigger phase
+ADC channel sequence/latency
+computation delay
+actuation delay
+zero-order hold / discretization method
+```
 
-A mathematically correct continuous controller can behave differently after discretization if these details are ignored.
+Ignoring these details can invalidate an otherwise correct continuous-time design.
 
-## Parameter Sources
+## Measurement Dynamics
 
-Model parameters should come from traceable sources and be classified by confidence:
+The controller observes the plant through:
 
-### Nominal component data
+```text
+physical quantity
+    ↓
+shunt/divider + op-amp
+    ↓
+analog RC network
+    ↓
+PWM-synchronous ADC sample
+    ↓
+scan/conversion latency
+    ↓
+DMA
+    ↓
+calibration/filtering
+```
 
-Examples:
+Measurement dynamics are added to a model only when significant relative to estimator/controller bandwidth.
 
-- inductance;
-- inductor DCR;
-- capacitance;
-- shunt resistance;
-- MOSFET resistance and charge data.
+## Parameter Provenance
 
-### Schematic-derived values
+Classify model parameters as:
 
-Examples:
+### Schematic / nominal
 
-- sensing ratios;
-- amplifier gains;
-- RC filters;
-- gate resistance.
+Examples: L, C, resistor ratios, shunt value, gate resistor, nominal DCR.
 
-### Measured values
+### Datasheet-derived
 
-Examples:
+Examples: MOSFET resistance/charge bounds, driver timing bounds, device tolerances.
 
-- actual inductance;
-- actual capacitor ESR;
-- current-sense zero offset;
-- effective dead time;
-- sensor delay;
-- power-stage loss.
+### Measured / identified
 
-Measured values should supersede nominal assumptions only when the measurement method and conditions are recorded.
+Examples: effective L, effective C/ESR, current offset/gain, dead time, sensor delay, loss terms.
 
-## Parameter Database
+Measured values supersede nominal values only when method, operating condition, and dataset identity are recorded.
 
-Selected plant parameters should eventually be stored in a machine-readable source such as:
+## Machine-Readable Parameters
+
+The project should converge on a single machine-readable parameter source, for example:
 
 ```text
 models/parameters/plant.yaml
 ```
 
-The intent is to avoid independent copies of the same constants in simulation scripts, controller design notebooks, test tools, and firmware documentation.
-
-The parameter file should contain selected engineering values and provenance, not bulk copies of third-party datasheets.
+It should contain engineering values plus provenance/confidence, not copies of third-party datasheets. Simulation, analysis, and firmware-generated configuration should derive from this source where practical.
 
 ## Identification Strategy
 
-Model identification is used to close the gap between calculation and real hardware.
+Only identify parameters that materially affect a current engineering question. Useful methods include:
 
-Possible methods include:
+- current-slope estimation for effective L;
+- terminal-voltage/current transients for effective C/source/load dynamics;
+- small perturbation response for local loop models;
+- measured timing for ADC/HRTIM delay;
+- loss correlation if control allocation optimizes efficiency.
 
-- steady-state duty / voltage correlation;
-- inductor-current slope measurements;
-- load-step response;
-- small perturbation response;
-- frequency-response measurement where instrumentation and operating conditions permit.
-
-Identification is not a substitute for physical modeling. It is used to validate, refine, or reject model assumptions.
-
-## Validation Loop
-
-The project follows this loop:
-
-```text
-Choose operating point
-        ↓
-Predict behavior
-        ↓
-Run simulation
-        ↓
-Measure hardware
-        ↓
-Compare quantitative metrics
-        ↓
-Explain mismatch
-        ↓
-Update model or assumptions
-        ↺
-```
-
-Useful comparison quantities include:
-
-- steady-state conversion ratio;
-- inductor-current ripple;
-- transient shape;
-- overshoot / undershoot;
-- settling time;
-- dominant frequency / damping;
-- measured loop response where available.
+Do not launch broad identification simply to re-prove the vendor baseline.
 
 ## Model Acceptance
 
-A model is not accepted because it produces plausible waveforms.
+A model is accepted for a stated purpose only when it records:
 
-Every validated model should state:
-
-- intended operating region;
-- operating-point range;
-- parameter set;
-- measurement data used for validation;
-- metrics used for comparison;
+- intended operating envelope;
+- state/input/output definitions;
+- parameter set and provenance;
+- validation dataset;
+- quantitative error/fit metric appropriate to the control question;
 - known limitations.
 
-A model may be valid for controller design around one operating point and invalid for another. That is an expected result, not necessarily a modeling failure.
+A model may be valid for one controller or operating region and inadequate elsewhere. That is an expected engineering result.
 
-## Relationship to Control Research
+## Relationship to Controller Families
 
-The modeling hierarchy maps naturally to the controller families in this project:
-
-| Control method | Minimum useful model basis |
+| Controller / function | Minimum useful model basis |
 | --- | --- |
-| PI / PID | measured dynamics or low-order small-signal model |
-| Type-III | loop / small-signal frequency-domain model |
-| State feedback | state-space model |
-| LQR | state-space model and weighting definition |
-| Observer | state-space model and measurement model |
-| Kalman / LQG | discrete or continuous stochastic state-space model with noise assumptions |
-| Gain scheduling | validated models across multiple operating points |
-| MPC | discrete state-space model plus explicit constraints |
-
-The purpose of advanced control is therefore inseparable from model quality.
+| Cascaded PI | local measured/small-signal dynamics + `iL_hat` quality |
+| LQI | state-space model + observer/state definition |
+| Deadbeat current control | low-delay discrete inductor model |
+| ST-SMC | bounded plant/measurement uncertainty |
+| MPC | discrete state-space model + explicit constraints |
+| `iL_hat` estimator | canonical three-state large-signal/discrete model |
+| Unified allocator | averaged `vL* = d1 Vin - (1-d2) Vout` relation + constraints |
 
 ## Design Rules
 
-1. Every model is tied to operating conditions.
-2. Nominal component values and measured values are not silently mixed.
-3. Sensor and implementation dynamics are included when relevant to loop behavior.
-4. Controller comparison uses the same physical plant and measurement convention.
-5. Model validation is quantitative.
-6. Mismatch is investigated rather than hidden by retuning.
-7. More complex controllers are introduced only when the model is sufficiently validated to support them.
+1. Use the canonical three-state backbone unless a documented reduction is justified.
+2. Tie every model to operating conditions and direction.
+3. Keep nominal and measured parameters distinct.
+4. Include sensing/actuation delay when relevant.
+5. Validate quantitatively against only the evidence required by the new design.
+6. Do not hide mismatch by retuning without explaining the cause.
+7. More complex control is allowed only when model/estimator quality and MCU timing can support it.
