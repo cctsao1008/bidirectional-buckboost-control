@@ -2,133 +2,67 @@
 
 ## Purpose
 
-This document defines the host-to-converter communication boundary for the bidirectional buck-boost control platform.
+This document defines the host-to-converter communication boundary. The host is supervisory; it is never part of the switching-cycle control loop.
 
-The host interface is intended for supervisory control, telemetry, experiment automation, and parameter management. It is **not** part of the real-time power-control loop.
-
-The intended host path is:
-
-```text
-Web Browser
-    ↓
-Web Serial API
-    ↓
-USB-to-UART adapter
-    ↓
-STM32F334 USART1
-    ↓
-Power Manager / Telemetry
-```
-
-The converter must remain locally deterministic. Voltage/current control, modulation, PWM timing, and protection execute on the STM32F334 and must not depend on host timing.
-
-## Design Principles
-
-1. The host sends supervisory commands, not switching commands.
-2. The host must never directly command individual MOSFET states or per-cycle duty ratios during normal operation.
-3. Every write command is validated by the firmware before it affects the power stage.
-4. Safety and fault handling remain authoritative on the converter.
-5. The wire protocol is binary, versioned, deterministic, and independent of the Web UI implementation.
-6. COBS provides framing and rapid stream resynchronization; CRC16 provides data-integrity checking.
-7. Engineering values are transferred as fixed-point integers rather than protocol-level floating-point values.
-8. The same protocol should be reusable by future Web, CLI, test, or analysis clients.
+The protocol is designed to support both a simple bring-up CLI and the later Web Serial experiment application.
 
 ## Physical Interface
-
-The current hardware exposes STM32F334 USART1 through the existing UART header.
 
 | Parameter | Value |
 | --- | --- |
 | Interface | USART1 |
-| MCU pins | PB6 TX / PB7 RX |
-| Format | 8 data bits, no parity, 1 stop bit |
-| Initial baud rate | 115200 bit/s |
-| Flow control | None |
-| Duplex | Full duplex |
+| Pins | PB6 TX / PB7 RX |
+| Initial baud | 115200 bit/s |
+| Format | 8N1 |
+| Flow control | none |
+| Duplex | full |
 
-`115200` is intentionally conservative for first bring-up. Higher rates such as `460800` or `921600` may be introduced after protocol and signal-integrity validation.
+Higher baud rates may be introduced only after transport and signal-integrity validation.
 
 ## Layering
 
 ```text
-Web UI
-  ↓
-Device API
-  ↓
-Protocol Codec
-  ↓
-Web Serial Transport
-  ↓
-UART
-  ↓
-Firmware Protocol Parser
-  ↓
-Power Manager / Telemetry Provider
+CLI / Web UI
+    ↓
+Device API / Protocol Codec
+    ↓
+Serial transport
+    ↓
+USART1
+    ↓
+Firmware protocol parser
+    ↓
+Power Manager / Telemetry provider
 ```
 
-The UI must not directly read from or write to the serial port. UI components interact only with the Device API.
+The host never directly writes gate states, HRTIM compare values, or switching-cycle duties.
 
 ## Wire Framing
 
-Protocol version 1 uses a binary raw frame, followed by CRC16, COBS encoding, and a `0x00` delimiter.
+Protocol major version 1 uses:
 
 ```text
-Raw frame
-──────────────────────────────────────────────
-VERSION | TYPE | CMD | FLAGS | SEQ | LENGTH
-PAYLOAD
-CRC16
-──────────────────────────────────────────────
-                  ↓
-                 COBS
-                  ↓
-encoded bytes ... 0x00
-                  ^ frame delimiter
+raw header + payload + CRC16
+        ↓
+COBS encode
+        ↓
+0x00 delimiter
 ```
 
-The raw packet layout is:
+Raw layout:
 
 ```text
-+---------+------+-----+-------+--------+--------+---------+-------+
-| VERSION | TYPE | CMD | FLAGS | SEQ    | LENGTH | PAYLOAD | CRC16 |
-| 1 byte  | 1 B  | 1 B | 1 B   | 2 B    | 2 B    | N bytes | 2 B   |
-+---------+------+-----+-------+--------+--------+---------+-------+
++---------+------+-----+-------+------+--------+---------+-------+
+| VERSION | TYPE | CMD | FLAGS | SEQ  | LENGTH | PAYLOAD | CRC16 |
+| 1 byte  | 1 B  | 1 B | 1 B   | 2 B | 2 B    | N bytes | 2 B   |
++---------+------+-----+-------+------+--------+---------+-------+
 ```
 
-### Fields
+All multi-byte integers are little-endian. Maximum payload for version 1 is 240 bytes.
 
-| Field | Size | Description |
-| --- | ---: | --- |
-| `VERSION` | 1 | Protocol major version, initially `0x01` |
-| `TYPE` | 1 | Message type |
-| `CMD` | 1 | Command identifier |
-| `FLAGS` | 1 | Reserved for command/transport flags; initially zero |
-| `SEQ` | 2 | Host-generated sequence number |
-| `LENGTH` | 2 | Payload length in bytes |
-| `PAYLOAD` | N | Command-specific payload |
-| `CRC16` | 2 | CRC-16/CCITT-FALSE over `VERSION` through end of payload |
+## CRC
 
-All multi-byte integer fields use little-endian byte order.
-
-Version-1 maximum payload length is `240` bytes. Larger objects must use future chunked-transfer commands rather than oversized frames.
-
-### COBS framing
-
-The complete raw frame, including CRC16, is COBS encoded. A single `0x00` byte terminates every encoded frame.
-
-Properties important to this project:
-
-- encoded frame data never contains `0x00`;
-- one delimiter unambiguously marks a frame boundary;
-- a damaged frame can be discarded without scanning for multi-byte SOF patterns;
-- the next `0x00` delimiter provides a deterministic resynchronization point;
-- framing overhead is bounded and small.
-
-COBS does not provide corruption detection. CRC16 remains mandatory.
-
-### CRC
-
-Protocol version 1 uses CRC-16/CCITT-FALSE:
+CRC-16/CCITT-FALSE:
 
 ```text
 Polynomial : 0x1021
@@ -139,62 +73,76 @@ XorOut     : 0x0000
 Check      : 0x29B1 for "123456789"
 ```
 
-CRC is calculated over the raw frame from `VERSION` through the last payload byte, before COBS encoding.
+CRC covers `VERSION` through the final payload byte before COBS encoding.
 
 ## Message Types
 
-| Value | Name | Direction | Meaning |
-| ---: | --- | --- | --- |
-| `0x01` | `REQUEST` | Host → MCU | Command or query |
-| `0x02` | `RESPONSE` | MCU → Host | Response matching `SEQ` |
-| `0x03` | `EVENT` | MCU → Host | Asynchronous event, reserved for later use |
-| `0x04` | `TELEMETRY` | MCU → Host | Periodic telemetry, reserved for later use |
-
-V0.1 uses request/response operation. Asynchronous telemetry is intentionally deferred until the basic transport is stable.
-
-## Response Status
+| Value | Name | Direction |
+| ---: | --- | --- |
+| `0x01` | `REQUEST` | host -> MCU |
+| `0x02` | `RESPONSE` | MCU -> host |
+| `0x03` | `EVENT` | MCU -> host, reserved |
+| `0x04` | `TELEMETRY` | MCU -> host, reserved |
 
 Every response payload begins with one status byte.
 
-| Value | Name | Meaning |
+## Response Status
+
+| Value | Name |
+| ---: | --- |
+| `0x00` | `OK` |
+| `0x01` | `ERR_BAD_CMD` |
+| `0x02` | `ERR_BAD_LENGTH` |
+| `0x03` | `ERR_BAD_VALUE` |
+| `0x04` | `ERR_BAD_STATE` |
+| `0x05` | `ERR_FAULT_ACTIVE` |
+| `0x06` | `ERR_BUSY` |
+| `0x07` | `ERR_INTERNAL` |
+
+## Command Namespace
+
+The protocol header reserves these command IDs:
+
+| ID | Command | Intended purpose |
 | ---: | --- | --- |
-| `0x00` | `OK` | Command completed successfully |
-| `0x01` | `ERR_BAD_CMD` | Unknown or unsupported command |
-| `0x02` | `ERR_BAD_LENGTH` | Invalid payload size |
-| `0x03` | `ERR_BAD_VALUE` | Value outside allowed range |
-| `0x04` | `ERR_BAD_STATE` | Command not allowed in current converter state |
-| `0x05` | `ERR_FAULT_ACTIVE` | Command blocked by active fault |
-| `0x06` | `ERR_BUSY` | Resource or operation currently busy |
-| `0x07` | `ERR_INTERNAL` | Internal firmware error |
+| `0x01` | `PING` | link/parser check |
+| `0x02` | `GET_INFO` | protocol/firmware identity |
+| `0x03` | `GET_STATUS` | state and primary measurements |
+| `0x10` | `SET_VREF` | future regulated-voltage reference request |
+| `0x11` | `SET_ILIMIT` | future current-limit/reference ceiling request |
+| `0x12` | `OUTPUT_ENABLE` | future Power Manager startup request |
+| `0x13` | `OUTPUT_DISABLE` | future controlled-shutdown request |
+| `0x14` | `CLEAR_FAULT` | future recoverable-fault clear request |
 
-## V0.1 Commands
+### Currently implemented subset
 
-| ID | Command | Direction | Purpose |
-| ---: | --- | --- | --- |
-| `0x01` | `PING` | R/W | Verify link and protocol parser |
-| `0x02` | `GET_INFO` | Read | Read firmware/protocol identification |
-| `0x03` | `GET_STATUS` | Read | Read converter state and measurements |
-| `0x10` | `SET_VREF` | Write | Set output-voltage reference |
-| `0x11` | `SET_ILIMIT` | Write | Set output-current limit/reference ceiling |
-| `0x12` | `OUTPUT_ENABLE` | Write | Request converter startup |
-| `0x13` | `OUTPUT_DISABLE` | Write | Request converter shutdown |
-| `0x14` | `CLEAR_FAULT` | Write | Request clearing of recoverable faults |
+The current firmware intentionally implements only:
 
-### `PING` — `0x01`
+```text
+PING
+GET_INFO
+GET_STATUS
+```
+
+All other reserved commands return `ERR_BAD_CMD` until the corresponding Power Manager/reference functionality exists. Reserving an ID does **not** mean that the feature is implemented or safe to use.
+
+This distinction prevents documentation from implying power-control capability before the firmware actually has it.
+
+## `PING` — `0x01`
 
 Request payload: empty.
 
-Response payload after status:
+Response after status:
 
 ```text
 uint32_t uptime_ms
 ```
 
-### `GET_INFO` — `0x02`
+## `GET_INFO` — `0x02`
 
 Request payload: empty.
 
-Response payload after status:
+Response after status:
 
 ```text
 uint8_t  protocol_major
@@ -202,17 +150,17 @@ uint8_t  protocol_minor
 uint8_t  firmware_major
 uint8_t  firmware_minor
 uint8_t  firmware_patch
-uint8_t  controller_capability_bits
+uint8_t  capability_bits
 uint32_t build_id
 ```
 
-`build_id` is implementation-defined and may be a compact build number or truncated revision identifier.
+`build_id` is implementation-defined until a stronger firmware provenance scheme is frozen.
 
-### `GET_STATUS` — `0x03`
+## `GET_STATUS` — `0x03`
 
 Request payload: empty.
 
-Response payload after status:
+Current response after status:
 
 ```text
 uint32_t uptime_ms
@@ -231,68 +179,13 @@ uint16_t duty_a_q15
 uint16_t duty_b_q15
 ```
 
-The Web UI may derive input power, output power, and efficiency from these primary measurements.
+Current is signed to preserve bidirectional semantics. `vin_mV` / `vout_mV` retain board-signal naming; UI may display Port A / Port B where direction-neutral terminology is clearer.
 
-Current values are signed to preserve bidirectional power-flow semantics.
+The present firmware returns a safe inactive state and zero measurement fields until acquisition is integrated.
 
-Duty values use unsigned Q15 scaling:
+## Canonical Power-State Values
 
-```text
-0x0000 = 0.0
-0x7FFF ≈ 1.0
-```
-
-### `SET_VREF` — `0x10`
-
-Request payload:
-
-```text
-uint32_t vref_mV
-```
-
-Response payload: status only.
-
-The firmware validates the requested value against configured operating limits before accepting it.
-
-### `SET_ILIMIT` — `0x11`
-
-Request payload:
-
-```text
-uint32_t ilimit_mA
-```
-
-Response payload: status only.
-
-The current limit is a supervisory constraint. The exact internal control action is determined by the active control architecture.
-
-### `OUTPUT_ENABLE` — `0x12`
-
-Request payload: empty.
-
-Response payload: status only.
-
-This command is a request to start, not a direct PWM-enable operation. The Power Manager remains responsible for qualification, soft-start, fault checks, and state transitions.
-
-### `OUTPUT_DISABLE` — `0x13`
-
-Request payload: empty.
-
-Response payload: status only.
-
-The disable request must be accepted from any non-reset state unless the firmware is already executing a more restrictive safety shutdown.
-
-### `CLEAR_FAULT` — `0x14`
-
-Request payload: empty.
-
-Response payload: status only.
-
-Only recoverable faults may be cleared remotely. Latched or hardware-critical faults may require power cycling or an explicit local recovery procedure.
-
-## State Enumerations
-
-Initial `power_state` values:
+Power-state semantics are owned by `protection-and-state-machine.md` and mirrored on the wire:
 
 | Value | State |
 | ---: | --- |
@@ -300,9 +193,13 @@ Initial `power_state` values:
 | `1` | `QUALIFY` |
 | `2` | `SOFT_START` |
 | `3` | `REGULATION` |
-| `4` | `FAULT` |
+| `4` | `SHUTDOWN` |
+| `5` | `FAULT` |
+| `6` | `RETRY_WAIT` |
 
-Initial `operating_region` values:
+Boot/reset is not a stable externally visible power state.
+
+## Operating-Region Values
 
 | Value | Region |
 | ---: | --- |
@@ -311,163 +208,156 @@ Initial `operating_region` values:
 | `2` | `MIXED` |
 | `3` | `BOOST` |
 
-Initial `controller_type` values:
+Region describes modulation behavior, not power-flow direction.
+
+## Controller-Type Values
+
+Reserved identifiers:
 
 | Value | Controller |
 | ---: | --- |
 | `0` | `NONE` |
-| `1` | `PI` |
-| `2` | `DEADBEAT` |
-| `3` | `SUPER_TWISTING_SMC` |
-| `4` | `LQI` |
+| `1` | `CASCADED_PI` |
+| `2` | `LQI` |
+| `3` | `DEADBEAT` |
+| `4` | `SUPER_TWISTING_SMC` |
 | `5` | `MPC` |
 
-These identifiers reserve protocol space; they do not imply that all controllers are already implemented or validated.
+These are namespace reservations, not implementation claims.
 
-## Units and Scaling
+## Future Bidirectional Reference Semantics
 
-| Quantity | Wire representation |
-| --- | --- |
-| Voltage | millivolts (`mV`) |
-| Current | milliamps (`mA`) |
-| Time | milliseconds (`ms`) unless otherwise documented |
-| Duty ratio | unsigned Q15 |
-| Power | normally calculated by host from V/I |
+The existing names `SET_VREF`, `vin_mV`, and `vout_mV` reflect board/history naming. Before enabling bidirectional reference-setting commands, the firmware must freeze a direction-neutral request model that identifies at least:
 
-Floating-point values are not transferred in V0.1.
+```text
+regulated physical port / objective
+requested power-flow direction
+voltage/current/power reference as applicable
+limits
+```
+
+A reverse-power request must **not** be implemented by swapping ADC channels or silently redefining `Vin` and `Vout`.
+
+If the existing `SET_VREF` ID is used, its semantics must be defined relative to an explicit active regulation target/capability, not permanently interpreted as “always regulate physical Port B.” A version/capability extension is preferred over ambiguous semantics.
+
+## Future Write-Command Safety
+
+When implemented:
+
+```text
+wire request
+    ↓
+frame/CRC validation
+    ↓
+value/range validation
+    ↓
+shadow request/config
+    ↓
+Power Manager qualification
+    ↓
+atomic safe-point commit
+    ↓
+controller/reference layer
+```
+
+`OUTPUT_ENABLE` must request `OFF -> QUALIFY`; it never directly enables HRTIM outputs. `OUTPUT_DISABLE` requests `SHUTDOWN`. `CLEAR_FAULT` requests policy evaluation and cannot bypass a latched fault.
 
 ## Sequence Handling
 
-The host increments `SEQ` for each request. The MCU copies the request sequence number into the corresponding response.
+Host increments `SEQ`; the MCU copies the sequence into the matching response. Version 1 assumes at most one outstanding request from the simple client.
 
-The MCU does not need to process multiple outstanding V0.1 requests concurrently. The initial Web client should use one outstanding request at a time.
-
-## Firmware Receive Path
-
-The initial firmware path is:
+## Receive Path
 
 ```text
-USART RX interrupt
+USART RX IRQ
       ↓
-byte ring buffer
+ring buffer
       ↓
-background protocol service
+background stream collector
       ↓
-collect bytes until 0x00
+0x00 delimiter
       ↓
 COBS decode
       ↓
-length / version checks
+version / length checks
       ↓
 CRC16 check
       ↓
-command dispatch
+dispatch
 ```
 
-The USART ISR only moves bytes into the ring buffer. COBS decoding, CRC validation, command execution, and response creation must not run in the interrupt handler or in the 200 kHz control path.
+The parser must discard malformed frames without changing converter state and resynchronize at the next delimiter.
 
-### Stream parser requirements
-
-The parser must:
-
-1. treat `0x00` as the only frame delimiter;
-2. discard empty frames;
-3. drop an overlength encoded frame until the next delimiter;
-4. COBS-decode only complete delimited frames;
-5. reject unsupported protocol versions;
-6. reject payload lengths larger than the configured maximum;
-7. validate CRC before command dispatch;
-8. discard corrupted frames without changing converter state;
-9. never execute a partially received command;
-10. resynchronize at the next delimiter after framing damage.
-
-Protocol diagnostics should track at least:
+Recommended counters:
 
 ```text
+rx_bytes
+tx_bytes
 valid_frames
 cobs_errors
 crc_errors
 length_errors
 version_errors
 rx_overflows
+unknown_commands
 ```
 
-## Safety Boundary
+## Bring-Up Client Strategy
 
-The UART protocol is outside the real-time safety boundary.
-
-```text
-Host command
-    ↓
-Protocol validation
-    ↓
-Power Manager validation
-    ↓
-Reference / state request
-    ↓
-Real-time control loop
-    ↓
-Modulation / PWM
-```
-
-The normal host protocol must not provide:
-
-- direct individual MOSFET switching commands;
-- host-timed PWM generation;
-- commands that bypass mandatory overcurrent or overvoltage protection;
-- commands that bypass soft-start and power-stage qualification;
-- references outside firmware-enforced limits.
-
-Communication loss must never disable local protection.
-
-The later remote-session design may support both autonomous operation and a remote-armed mode with controlled shutdown on heartbeat loss.
-
-## Web Client V0.1 Transaction Model
+Physical UART/protocol bring-up should use the Windows-side `tools/host_cli.py` first because it isolates serial/protocol behavior from browser/Web Serial complexity:
 
 ```text
-User clicks Connect
-      ↓
-Browser selects serial port
-      ↓
-Open 115200 8N1
-      ↓
 PING
-      ↓
 GET_INFO
-      ↓
 GET_STATUS
-      ↓
-Dashboard ready
 ```
 
-Normal dashboard operation initially polls `GET_STATUS` at approximately 10–20 Hz. This is sufficient for bring-up and keeps unsolicited traffic out of the first transport implementation.
+Once this transport is stable on hardware, the Web Serial client can reuse the same wire protocol.
 
-High-rate transient measurements must later use MCU-timestamped buffered capture rather than browser timing.
+## Web Client Architecture
+
+Later:
+
+```text
+User Connect
+    ↓
+Web Serial open
+    ↓
+PING
+    ↓
+GET_INFO / capabilities
+    ↓
+GET_STATUS
+    ↓
+Dashboard / experiment services
+```
+
+Normal dashboard telemetry may begin as 10–20 Hz polling. High-rate transients must use MCU-timestamped local capture and chunked transfer rather than browser timing.
 
 ## Planned Extensions
 
-- periodic telemetry streaming;
 - capability discovery;
-- controller selection and atomic tuning-parameter updates;
-- programmable voltage/current sequences;
-- deterministic profile execution on the MCU;
-- MCU-timestamped waveform capture and chunked data transfer;
+- direction/regulated-port metadata;
+- telemetry streaming;
+- atomic controller/config updates;
+- programmable sequences;
+- local deterministic profile execution;
+- timestamped waveform capture;
 - calibration read/write;
 - fault-history retrieval;
-- remote-session watchdog policy;
-- firmware-update handoff.
+- remote-armed heartbeat policy;
+- firmware provenance/update handoff.
 
-## V0.1 Acceptance Criteria
+## Transport Acceptance
 
-The protocol is ready for Web UI integration when all of the following are demonstrated:
+The host-transport foundation is accepted when:
 
-1. Web Serial connects to the USB-to-UART adapter.
-2. `PING` survives repeated connect/disconnect cycles.
-3. `GET_INFO` returns valid protocol and firmware identification.
-4. `GET_STATUS` returns stable Vin/Vout/Iin/Iout values.
-5. COBS framing resynchronizes after injected byte errors or garbage frames.
-6. CRC-corrupted packets are rejected without side effects.
-7. Invalid references are rejected by firmware.
-8. `OUTPUT_ENABLE` enters the normal Power Manager startup path rather than directly enabling PWM.
-9. `OUTPUT_DISABLE` safely requests shutdown.
-10. Browser loss or UART noise cannot bypass converter protection.
+1. repeated connect/disconnect preserves parser operation;
+2. `PING` responds with valid sequence/CRC framing;
+3. `GET_INFO` reports valid protocol/firmware identity;
+4. `GET_STATUS` returns a correctly decoded inactive state before measurement integration;
+5. malformed COBS/CRC frames are rejected without side effects;
+6. stream resynchronization works after garbage/overflow;
+7. communication failure cannot alter local protection or PWM authority.
+
+Power-control command acceptance is a later Power Manager milestone, not part of the transport gate.
