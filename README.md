@@ -2,36 +2,36 @@
 
 A digital-power research platform for a four-switch, non-isolated, bidirectional buck-boost converter based on the STM32F334.
 
-The project starts from a vendor-proven 200 W power stage and focuses on the control problems that remain interesting after basic converter operation is already known to work: synchronized sensing, state estimation without a dedicated inductor-current ADC, unified bidirectional control, advanced model-based control, optimization-assisted design, and learning-enhanced control.
+The project starts from a vendor-proven power stage and focuses on the control architecture that remains technically interesting after basic converter operation is already known to work: synchronized measurement, inductor-current state estimation without a permanent `iL` sensor, unified bidirectional control, and continuous constrained duty allocation.
 
 > **Validate the implementation delta, not the vendor-proven baseline.**
 
 ---
 
-## Project Direction
+## Project Goal
 
-The goal is not to reproduce another Buck / Boost / PID demonstration.
+Build one coherent control architecture for both directions of power flow without duplicating Buck, Mixed, and Boost control logic.
 
-The goal is to build one coherent control architecture around the physical converter:
+The target control path is:
 
 ```text
 PWM-synchronized sensing
         ↓
 Vin / Iin / Vout / Iout
         ↓
-state estimation
+physics-based fast iL predictor
+        ↓
+slow measurement-based correction
         ↓
 iL_hat
         ↓
-voltage / energy control
-        ↓
-iL_ref
-        ↓
-current control
+voltage / current control
         ↓
 vL*
         ↓
-unified constrained allocation
+continuous constrained allocator
+        ↓
+e1 / e2
         ↓
 d1 / d2
         ↓
@@ -40,204 +40,20 @@ HRTIM
 four-switch power stage
 ```
 
-The canonical averaged relation is:
-
-```text
-Cin  dVin/dt  = Iin - d1 iL
-L    diL/dt   = d1 Vin - (1 - d2) Vout
-Cout dVout/dt = (1 - d2) iL - Iout
-```
-
-and the control abstraction is:
-
-```text
-d1 Vin - (1 - d2) Vout = vL*
-```
-
-This deliberately separates the controller from the switching-region details. Buck, Mixed, and Boost behavior are handled by the allocation/modulation layer rather than by three unrelated control laws.
+The design keeps physical port identities fixed, represents power-flow direction with signed quantities, and keeps switching-region behavior out of the controller itself.
 
 ---
 
-## Four-Phase Research Roadmap
+## Canonical Converter Model
 
-Basic firmware bring-up, UART, GPIO initialization, HRTIM setup, ADC/DMA drivers, protocol support, CI, and minimum protection plumbing are implementation prerequisites. They are necessary, but they are not counted as research phases.
-
-### Phase 1 — Measurement & State Estimation
-
-Build the measurement foundation required by every later control method.
-
-```text
-PWM-synchronized ADC
-        ↓
-signed calibration
-        ↓
-Vin / Iin / Vout / Iout
-        ↓
-physics-based state estimator
-        ↓
-iL_hat + validity/confidence
-```
-
-Primary work:
-
-- HRTIM-synchronized ADC acquisition;
-- deterministic sample phase and conversion timing;
-- signed current calibration and zero-current offset handling;
-- timestamped / indexed data capture;
-- inductor-current observability analysis;
-- physics-based `iL` reconstruction using existing sensors;
-- development-only external `iL` reference measurement where needed to validate the estimator.
-
-The final architecture does **not** add a dedicated inductor-current sensor.
-
-### Phase 2 — Unified Bidirectional Control
-
-Create one control stack for the full converter operating envelope.
-
-```text
-iL_hat
-   ↓
-voltage / energy controller
-   ↓
-iL_ref
-   ↓
-current controller
-   ↓
-vL*
-   ↓
-unified d1/d2 allocation
-   ↓
-Buck / Mixed / Boost
-   ↓
-A ↔ B power flow
-```
-
-Primary work:
-
-- cascaded voltage/current control baseline;
-- `vL*` as the controller-to-modulator interface;
-- constrained `d1/d2` allocation;
-- minimum-pulse, dead-time, and bootstrap constraints;
-- smooth Buck / Mixed / Boost transitions;
-- fixed physical Port A / Port B semantics;
-- signed current and signed power-flow representation;
-- controlled forward/reverse and zero-current transitions;
-- one firmware image for both power-flow directions.
-
-Completion of Phase 2 establishes the core project: a unified bidirectional digital-power platform independent of vendor mode-specific control structure.
-
-### Phase 3 — Advanced Control & Optimization
-
-Introduce more capable control methods only where they provide a useful engineering benefit.
-
-Candidate methods include:
-
-- LQI;
-- Deadbeat Predictive Current Control;
-- Super-Twisting Sliding Mode Control;
-- constrained / reduced-complexity MPC.
-
-Optimization is treated as a design tool rather than a project goal by itself. Candidate optimizers may include:
-
-- Genetic Algorithm (GA);
-- Particle Swarm Optimization (PSO);
-- CMA-ES;
-- conventional numerical or grid-based optimization.
-
-Useful optimization targets include plant/observer parameters, controller gains, predictive-control weights, and the free degree of freedom in unified `d1/d2` allocation.
-
-The governing rule is simple:
-
-> **Every advanced method must earn its complexity.**
-
-A method that adds substantial implementation cost without useful control improvement is not required to remain in the final architecture.
-
-### Phase 4 — Learning-Enhanced Control
-
-Introduce neural-network methods only after the deterministic physics-based platform is working and measured data shows a clear reason for learning.
-
-The preferred first use is a bounded residual model:
-
-```text
-physics predictor
-       +
-Tiny NN residual
-       ↓
-improved iL_hat / model prediction
-```
-
-For example:
-
-```text
-iL_hat = iL_hat_physics + ΔiL_NN
-```
-
-Other possible research paths are:
-
-- NN-assisted state estimation;
-- learned compensation of nonlinear model residuals;
-- low-rate adaptive parameter scheduling;
-- distillation of an expensive MPC policy into a Tiny-NN representation when the original controller is too costly for the STM32F334.
-
-Learning never owns the safety boundary. NN outputs remain bounded and pass through deterministic constraints, and the physics-based path remains available as a fallback.
-
----
-
-## Hardware Platform
-
-The target board is the CBB024D / CBB02405D V1.2 four-switch synchronous bidirectional buck-boost converter.
-
-![Four-switch bidirectional buck-boost topology](docs/images/four-switch-bidirectional-buck-boost-topology.svg)
-
-### Physical switch mapping
-
-| Function | Device / MCU pin |
-| --- | --- |
-| Left high-side | Q1 / PA8 `PWM1H` |
-| Left low-side | Q4 / PA9 `PWM1L` |
-| Right high-side | Q2 / PA10 `PWM2H` |
-| Right low-side | Q3 / PA11 `PWM2L` |
-
-### Existing measurements
-
-| Signal | MCU pin |
-| --- | --- |
-| `Vin` | PA0 |
-| `Iin` | PA1 |
-| `Vout` | PA2 |
-| `Iout` | PA3 |
-| `VADJ` | PA4 |
-
-### Nominal hardware characteristics
-
-| Parameter | Value |
-| --- | --- |
-| MCU | STM32F334C8T6 |
-| Switching / control rate | 200 kHz |
-| Input voltage | 12–48 VDC |
-| Output voltage | 5–48 VDC |
-| Rated output | 24 V / 5 A |
-| Suggested maximum power | 200 W |
-| Main inductor | 22 µH nominal |
-| Current shunts | 1 mΩ |
-| Main MOSFETs | BSC070N10NS3G |
-| Gate drivers | Si8233BD-D-IS |
-| Host UART | USART1, PB6 / PB7 |
-
-The hardware already measures both terminal currents, but there is no dedicated ADC channel for the main inductor current. That constraint is intentionally retained and becomes part of the state-estimation problem.
-
----
-
-## Control Conventions
-
-Physical identities do not change when the direction of energy flow changes:
+Physical ports are fixed:
 
 ```text
 Port A = physical left / schematic VIN side
 Port B = physical right / schematic VOUT side
 ```
 
-Project conventions:
+Project sign conventions:
 
 ```text
 Iin  > 0 : current enters the converter from Port A
@@ -248,67 +64,307 @@ d1 = Q1 left high-side logical duty
 d2 = Q3 right low-side logical duty
 ```
 
-Forward A → B operation therefore has positive `Iin`, `Iout`, and normally positive `iL`. Reverse B → A operation is represented by signed quantities rather than by swapping ADC channels, timer ownership, or physical port names.
+The CCM averaged model is:
 
-See [`control-conventions.md`](docs/design/control-conventions.md) for the complete canonical definition.
+```text
+Cin  dVin/dt  = Iin - d1 iL
+L    diL/dt   = d1 Vin - (1 - d2) Vout
+Cout dVout/dt = (1 - d2) iL - Iout
+```
+
+The controller requests average inductor voltage:
+
+```text
+d1 Vin - (1 - d2) Vout = vL*
+```
+
+The initial control scope is continuous-conduction operation. Buck, Mixed, and Boost remain useful descriptions of operating points, but they are not firmware control states.
+
+---
+
+## Effective-Duty Coordinates
+
+The allocator uses effective duty coordinates:
+
+```text
+e1 = d1
+e2 = 1 - d2
+```
+
+so the inductor-voltage relation becomes:
+
+```text
+Vin e1 - Vout e2 = vL*
+```
+
+or, in vector form,
+
+```text
+a = [ Vin, -Vout ]^T
+e = [ e1,  e2   ]^T
+
+a^T e = vL*
+```
+
+For one requested `vL*`, the feasible solutions form a line in the `(e1,e2)` plane. Duty, minimum-pulse, and bootstrap limits reduce the admissible region to a bounded box.
+
+The allocator therefore solves a deterministic geometric problem:
+
+```text
+requested vL*
+      ↓
+feasibility clamp
+      ↓
+project previous (e1,e2)
+onto the feasible line segment
+      ↓
+e1 / e2
+      ↓
+d1 = e1
+d2 = 1 - e2
+```
+
+The initial secondary objective is minimum command movement:
+
+```text
+minimize
+    (e1 - e1_prev)^2 + (e2 - e2_prev)^2
+
+subject to
+    Vin e1 - Vout e2 = vL*
+    e1_min <= e1 <= e1_max
+    e2_min <= e2 <= e2_max
+```
+
+This produces a continuous, constant-time allocator without explicit Buck/Mixed/Boost branching.
+
+The null-space direction is:
+
+```text
+u = [ Vout, Vin ]^T
+```
+
+because:
+
+```text
+[ Vin, -Vout ] · [ Vout, Vin ] = 0
+```
+
+Movement along this direction redistributes the two effective duties without changing the requested average inductor voltage. The baseline implementation uses this redundant degree of freedom only to preserve continuity and minimize duty movement.
+
+---
+
+## Inductor-Current Estimation
+
+The board measures terminal currents but does not provide a dedicated ADC channel for main-inductor current.
+
+The estimator therefore uses a physics predictor as the fast path:
+
+```text
+vL_realized
+      ↓
+physics predictor
+      ↓
+iL_pred
+```
+
+with a slower measurement-based correction path:
+
+```text
+Vin / Iin / Vout / Iout
+          ↓
+conditioned low-bandwidth correction
+          ↓
+iL_hat
+```
+
+The fast predictor is driven by the **realized** allocator output rather than the unconstrained controller request:
+
+```text
+vL_realized = Vin e1 - Vout e2
+```
+
+This keeps the estimator consistent with the duty commands actually sent to the power stage, including allocator saturation.
+
+Terminal-current algebraic relationships are treated as correction information, not as per-cycle ground truth. Their usefulness depends on duty conditioning, capacitor-current dynamics, ADC noise, and sequential-sampling skew.
+
+A temporary external inductor-current measurement may be used during development to validate `iL_hat`; it is not part of the final control architecture.
+
+---
+
+## Four-Phase Development Path
+
+Basic firmware plumbing such as startup GPIO state, UART, HRTIM setup, ADC/DMA drivers, protocol support, CI, and minimum shutdown infrastructure is required implementation work but is not treated as a research result.
+
+### Phase 1 — Synchronized Measurement
+
+Establish deterministic measurement timing and capture:
+
+```text
+HRTIM trigger
+    ↓
+ADC1 scan + DMA
+    ↓
+coherent raw frame
+    ↓
+signed calibrated measurements
+    ↓
+indexed capture
+```
+
+Key outputs are known sample timing, quantified channel skew/noise, repeatable current offsets, and reliable signed `Vin/Iin/Vout/Iout` data.
+
+### Phase 2 — Inductor-Current State Estimation
+
+Implement and validate:
+
+```text
+fast physics predictor
+        +
+slow conditioned correction
+        ↓
+iL_hat
+```
+
+Validation uses synchronized converter data and a development-only external `iL` reference where required.
+
+### Phase 3 — Unified Bidirectional Control
+
+Build one cascaded control path around the estimated inductor current:
+
+```text
+voltage reference
+      ↓
+voltage controller
+      ↓
+iL_ref
+      ↓
+current controller
+      ↓
+vL*
+```
+
+The same control semantics are retained for A → B and B → A power flow. Direction is represented by signed current, power, and references rather than by remapping physical ports or timer ownership.
+
+### Phase 4 — Continuous Allocation & Validation
+
+Implement the `e1/e2` line-segment allocator, enforce hard duty constraints, and validate continuous operation across the intended CCM voltage-ratio and power-flow envelope.
+
+The phase is complete when controller output, allocator behavior, realized `vL`, duty continuity, saturation handling, and direction reversal are experimentally coherent on the real converter.
+
+---
+
+## Hardware Platform
+
+The target board is the CBB024D / CBB02405D V1.2 four-switch synchronous bidirectional buck-boost converter.
+
+![Four-switch bidirectional buck-boost topology](docs/images/four-switch-bidirectional-buck-boost-topology.svg)
+
+### Switch mapping
+
+| Function | Device / MCU pin |
+| --- | --- |
+| Left high-side | Q1 / PA8 `PWM1H` |
+| Left low-side | Q4 / PA9 `PWM1L` |
+| Right high-side | Q2 / PA10 `PWM2H` |
+| Right low-side | Q3 / PA11 `PWM2L` |
+
+### Measurement mapping
+
+| Signal | MCU pin |
+| --- | --- |
+| `Vin` | PA0 |
+| `Iin` | PA1 |
+| `Vout` | PA2 |
+| `Iout` | PA3 |
+| `VADJ` | PA4 |
+
+The four main control measurements are routed through ADC1 sequential conversion, so sample order and per-channel timing are part of the measurement model rather than assumed simultaneous.
+
+### Nominal characteristics
+
+| Parameter | Value |
+| --- | --- |
+| MCU | STM32F334C8T6 |
+| Switching rate | 200 kHz |
+| Input voltage | 12–48 VDC |
+| Output voltage | 5–48 VDC |
+| Rated output | 24 V / 5 A |
+| Suggested maximum power | 200 W |
+| Main inductor | 22 µH nominal |
+| Current shunts | 1 mΩ |
+| Main MOSFETs | BSC070N10NS3G |
+| Gate drivers | Si8233BD-D-IS |
+| Host UART | USART1, PB6 / PB7 |
 
 ---
 
 ## Firmware Architecture
 
-The firmware uses deterministic bare-metal C. libopencm3 provides the low-level peripheral layer, while CMSIS-DSP / CMSIS-NN may be used where they provide useful numerical or inference primitives.
+The firmware is deterministic bare-metal C. libopencm3 provides the low-level peripheral layer; CMSIS-DSP may be used for numerical primitives where useful.
 
 ```text
 Application / Power Manager
         ↓
 Control / Estimation
         ↓
-Unified Modulation
+Continuous Allocation
         ↓
-Platform
+Platform / HRTIM / ADC
         ↓
 libopencm3
         ↓
 STM32F334
 ```
 
-The hard real-time path remains local to the MCU. Host software is supervisory only.
+The hard real-time path stays entirely on the MCU.
+
+Host communication is supervisory and diagnostic:
 
 ```text
-Host CLI / Web UI
-        ↓
-COBS + CRC16 protocol
-        ↓
+Host CLI
+   ↓
+COBS + CRC16
+   ↓
 USB-UART / USART1
-        ↓
-Power Manager / Telemetry
+   ↓
+telemetry / capture / qualified requests
 ```
 
-Host commands request state changes; they do not directly command MOSFETs or bypass protection.
+In the target architecture, host commands request state changes through the Power Manager; they never directly command MOSFET states.
+
+High-rate experiment capture is stored in compact MCU buffers and transferred after capture rather than streamed as switching-cycle telemetry over UART.
 
 ---
 
-## Research Philosophy
+## Safety Boundary
 
-This repository follows four rules.
+The converter operates with significant voltage, current, switching energy, and stored energy. Control development therefore assumes staged, low-energy bring-up before broader closed-loop testing.
 
-### 1. Do not re-prove the vendor baseline
+Before energized switching, the implementation must provide at least:
 
-The vendor implementation is accepted as evidence that the physical board can perform basic Buck, Boost, Mixed, forward/reverse operation, 200 kHz switching, and conventional PI/PID-based regulation.
+```text
+safe GPIO startup state
+        ↓
+HRTIM configured forced inactive
+        ↓
+safe GPIO → alternate-function handoff
+        ↓
+bounded duty / minimum-pulse limits
+        ↓
+Power Manager enable authority
+        ↓
+fault / shutdown authority over PWM
+```
 
-Those capabilities are references, not project milestones.
+The current board has two important hardware limitations:
 
-### 2. Preserve the physics model
+- the Si8233 gate-driver `DISABLE` input is not MCU-controlled;
+- the existing current-sense outputs are not directly routed to STM32F334 comparator inputs for a hardware-speed overcurrent path.
 
-Advanced optimization or learning methods augment the deterministic converter model; they do not erase it.
+These constraints are treated as real hardware limits during experiment planning. Software protection and HRTIM shutdown do not substitute for an unavailable independent analog fault path.
 
-### 3. Keep safety deterministic
-
-Power-stage qualification, HRTIM safe-off behavior, duty constraints, minimum-pulse requirements, fault authority, and controlled shutdown remain outside GA/NN authority.
-
-### 4. Do not force an algorithm into the project
-
-GA, MPC, or NN is included only when data shows a problem worth solving and the method provides a useful benefit for its added complexity.
+Do not rely on online SWD debugging while the power stage is energized. Halting the MCU can leave PWM-related hardware in an unsafe condition. High-side gate and switching-node measurements require appropriate differential or isolated instrumentation.
 
 ---
 
@@ -321,24 +377,22 @@ docs/
 
 firmware/
   app/          application entry points and host service
-  control/      controllers and estimators
+  control/      estimator, controllers, and allocator
   platform/     STM32F334 peripheral implementation
-  power/        measurement and power-domain abstractions
+  power/        calibrated measurements and power-domain abstractions
   protocol/     MCU-independent COBS/CRC protocol
-  safety/       protection and supervisory implementation
+  safety/       Power Manager and shutdown authority
 
 test/
   power/        measurement/scaling tests
   protocol/     host-protocol tests
-  control_loop/ controller tests
+  control_loop/ estimator/controller/allocator tests
   protection/   state/protection tests
 
 tools/
-  analysis/     offline analysis / identification
+  analysis/     offline analysis and experiment processing
   host_cli.py   host-side UART client
 ```
-
-Future optimization and learning tools should remain host-side unless there is a clear embedded-runtime reason to deploy them.
 
 ---
 
@@ -346,45 +400,22 @@ Future optimization and learning tools should remain host-side unless there is a
 
 [`docs/design/README.md`](docs/design/README.md) defines the design-document source-of-truth hierarchy.
 
-Key documents:
+Key specifications:
 
-- [`hardware-specification.md`](docs/design/hardware-specification.md) — physical board facts;
-- [`control-conventions.md`](docs/design/control-conventions.md) — physical ports, signs, power, and duty definitions;
-- [`system-architecture.md`](docs/design/system-architecture.md) — system ownership and layering;
-- [`sensing-and-scaling.md`](docs/design/sensing-and-scaling.md) — measurement conversion and calibration;
-- [`current-observability-and-estimation.md`](docs/design/current-observability-and-estimation.md) — `iL_hat` strategy;
-- [`modulation-and-operating-regions.md`](docs/design/modulation-and-operating-regions.md) — `vL* → d1/d2` realization;
-- [`protection-and-state-machine.md`](docs/design/protection-and-state-machine.md) — Power Manager and safety boundary;
-- [`host-interface-and-uart-protocol.md`](docs/design/host-interface-and-uart-protocol.md) — host wire protocol;
-- [`development-roadmap.md`](docs/design/development-roadmap.md) — detailed development planning.
+- [`hardware-specification.md`](docs/design/hardware-specification.md) — physical board facts
+- [`control-conventions.md`](docs/design/control-conventions.md) — fixed ports, signs, power, and duty definitions
+- [`sensing-and-scaling.md`](docs/design/sensing-and-scaling.md) — measurement conversion and calibration
+- [`current-observability-and-estimation.md`](docs/design/current-observability-and-estimation.md) — `iL_hat` model and validation
+- [`modulation-and-operating-regions.md`](docs/design/modulation-and-operating-regions.md) — duty realization and constraints
+- [`protection-and-state-machine.md`](docs/design/protection-and-state-machine.md) — Power Manager and shutdown policy
+- [`host-interface-and-uart-protocol.md`](docs/design/host-interface-and-uart-protocol.md) — host wire protocol
 
-Current task status belongs in GitHub Issues and commits, not in stable architecture documents.
-
----
-
-## Safety
-
-This converter operates with significant voltage, current, switching energy, and stored energy.
-
-Before energized closed-loop work, the implementation must provide at least:
-
-```text
-explicit OFF state
-qualified enable path
-safe HRTIM inactive state
-bounded duty / minimum-pulse constraints
-fault authority over PWM
-controlled shutdown
-```
-
-The Si8233 gate-driver `DISABLE` input is not MCU-controlled on this hardware, so safe shutdown depends on the STM32F334/HRTIM output-control architecture and available hardware fault paths.
-
-Do not rely on online SWD debugging while the power stage is energized. Halting the MCU can leave PWM-related hardware in an unsafe condition. High-side gate and switching-node measurements require appropriate differential or isolated instrumentation.
+Current progress is tracked through GitHub Issues and commits rather than embedded in stable architecture documentation.
 
 ---
 
 ## Vendor Reference Material
 
-Vendor schematics, firmware, reports, examples, and manuals are treated as engineering reference evidence. They are used to recover physical mapping, timing, scaling, and known-good implementation details when needed.
+Vendor schematics, firmware, reports, examples, and manuals are treated as engineering reference evidence for physical mapping, timing, scaling, and known-good board behavior.
 
-The project does not attempt to reproduce the vendor tutorial sequence and does not redistribute third-party source archives as part of its own research output.
+The project does not repeat the vendor tutorial sequence as research work. The vendor-proven power stage is the starting point for the control architecture described here.
