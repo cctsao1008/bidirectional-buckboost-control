@@ -10,6 +10,7 @@ When two project documents overlap, use the following ownership rules instead of
 | --- | --- |
 | Project scope, phases, non-goals | `development-roadmap.md` |
 | System decomposition and ownership | `system-architecture.md` |
+| Vendor reference architecture versus project target architecture | `vendor-architecture-comparison.md` |
 | Physical board facts and pin mapping | `hardware-specification.md` |
 | Port, current, power, inductor-current, and duty conventions | `control-conventions.md` |
 | Firmware timing/layering policy | `firmware-architecture.md` |
@@ -57,7 +58,7 @@ A conceptual vendor diagram must not override the V1.2 schematic.
 
 > **Validate the implementation delta, not the vendor-proven baseline.**
 
-Vendor material is reference evidence. The project does not spend milestones re-proving basic Buck/Boost/Mixed operation, vendor PI/PID examples, or the already demonstrated power-stage capability. Hardware tests are performed when they are required to validate new firmware, sensing, estimation, modulation, protection, or controller behavior.
+Vendor material is reference evidence. The project does not spend milestones re-proving basic Buck/Boost/Mixed operation, vendor PI/PID examples, or the already demonstrated power-stage capability. Hardware tests are performed when they are required to validate new implementation, sensing, estimation, modulation, protection, or controller behavior.
 
 ## Keeping documents consistent
 
