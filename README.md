@@ -10,17 +10,17 @@ The project starts from a vendor-proven power stage and focuses on the control a
 
 ## ✨ Why This Is Interesting
 
-A four-switch bidirectional buck-boost converter is not difficult because Buck, Boost, or Mixed operation is unknown. Those operating modes are well understood, and the vendor firmware already demonstrates that this hardware can regulate power successfully.
+A four-switch bidirectional buck-boost converter is not difficult because Buck, Boost, or Mixed operation is unknown. Those operating modes are well understood, and the hardware is already known to regulate power successfully.
 
 The interesting question is whether the converter really needs to be controlled as three separate operating regions.
 
-This project explores a different abstraction:
+This project explores a unified physical-state architecture that:
 
-- keep the physical ports fixed;
-- represent power-flow direction with signed quantities;
-- estimate the main-inductor current without adding a permanent current sensor;
-- let the controller request average inductor voltage rather than a mode-specific duty;
-- exploit the redundant four-switch duty space through a continuous constrained allocator.
+- keeps the physical ports fixed;
+- represents power-flow direction with signed quantities;
+- estimates the main-inductor current without adding a permanent `iL` sensor;
+- lets the controller request average inductor voltage `vL*` rather than a mode-specific duty;
+- exploits the redundant four-switch duty space through a continuous constrained `e1/e2` allocator.
 
 This turns several practical implementation problems into one coherent control problem:
 
@@ -41,16 +41,6 @@ forward / reverse operation
       ↓
 signed physical states
 ```
-
-The research value is therefore not in proving that a bidirectional buck-boost converter works.
-
-It is in testing whether the same power stage can be controlled with a simpler, continuous, physically unified architecture.
-
----
-
-## 🧭 Project Goal
-
-Build one coherent control architecture for both directions of power flow without duplicating Buck, Mixed, and Boost control logic.
 
 The target control path is:
 
@@ -80,7 +70,7 @@ HRTIM
 four-switch power stage
 ```
 
-The design keeps physical port identities fixed, represents power-flow direction with signed quantities, and keeps switching-region behavior out of the controller itself.
+The research value is not in proving that a bidirectional buck-boost converter works. It is in testing whether the same power stage can be controlled with a simpler, continuous, and physically unified architecture.
 
 ---
 
@@ -119,75 +109,6 @@ d1 Vin - (1 - d2) Vout = vL*
 ```
 
 The initial control scope is continuous-conduction operation. Buck, Mixed, and Boost remain useful descriptions of operating points, but they are not explicit control-architecture states.
-
----
-
-## 🔀 Vendor Architecture vs This Architecture
-
-The vendor reference architecture and this project solve the same four-switch power stage from different abstractions.
-
-The vendor architecture treats Buck, Mixed, and Boost as explicit operating regions with region-dependent control and duty realization. This project instead asks whether the same hardware can be controlled through one continuous physical-state architecture using estimated inductor current, a common inductor-voltage command `vL*`, and a continuous constrained `e1/e2` allocator.
-
-```text
-Vendor Architecture
-──────────────────────────────────────
-
-                 regulated quantity
-                        │
-                 operating-mode logic
-                        │
-        ┌───────────────┼───────────────┐
-        ▼               ▼               ▼
-      BUCK            MIXED           BOOST
-    control          control          control
-        │               │               │
-     mode duty       mode duties      mode duty
-        └───────────────┼───────────────┘
-                        ▼
-                      HRTIM
-
-
-This Project Architecture
-──────────────────────────────────────
-
-             Vin / Iin / Vout / Iout
-                        │
-                        ▼
-                     iL_hat
-                        │
-                        ▼
-              voltage/current control
-                        │
-                       vL*
-                        │
-                        ▼
-          continuous e1/e2 allocator
-                        │
-                    d1 / d2
-                        │
-                        ▼
-                      HRTIM
-```
-
-The architectural difference is therefore:
-
-> **Vendor architecture:** mode-based converter control  
-> **This architecture:** unified physical-state control with continuous duty allocation
-
-| Item | Vendor Architecture | This Architecture |
-| --- | --- | --- |
-| Core abstraction | Buck / Mixed / Boost operating modes | Physical state + `vL*` + continuous allocator |
-| Controller organization | Region-dependent control behavior | One common CCM control path |
-| Main fast state | Measured regulated terminal quantities | Estimated inductor current `iL_hat` |
-| Controller output | Mode-specific duty realization | Requested average inductor voltage `vL*` |
-| Duty realization | Region-specific policy | Continuous constrained `e1/e2` projection |
-| Region transition | Explicit transition management | Continuous duty-space trajectory, subject to saturation |
-| Power direction | Direction/mode-oriented reference behavior | Fixed ports + signed states and references |
-| Research purpose | Proven practical converter implementation | Test a unified physical-state architecture |
-
-This is not a claim that the project architecture is already superior to the vendor architecture. The vendor implementation remains the known-good reference baseline; this project tests whether the architectural delta can be made physically correct, continuous, bidirectional, and experimentally useful.
-
-For the detailed comparison, see [`docs/design/vendor-architecture-comparison.md`](docs/design/vendor-architecture-comparison.md).
 
 ---
 
@@ -513,7 +434,6 @@ Key specifications:
 
 - [`hardware-specification.md`](docs/design/hardware-specification.md) — physical board facts
 - [`control-conventions.md`](docs/design/control-conventions.md) — fixed ports, signs, power, and duty definitions
-- [`vendor-architecture-comparison.md`](docs/design/vendor-architecture-comparison.md) — vendor mode-based architecture versus the project unified architecture
 - [`sensing-and-scaling.md`](docs/design/sensing-and-scaling.md) — measurement conversion and calibration
 - [`current-observability-and-estimation.md`](docs/design/current-observability-and-estimation.md) — `iL_hat` model and validation
 - [`modulation-and-operating-regions.md`](docs/design/modulation-and-operating-regions.md) — duty realization and constraints
