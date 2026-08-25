@@ -111,6 +111,8 @@ Q3 = low-side
 
 The four main control measurements are routed through ADC1 sequential conversion, so sample order and per-channel timing are part of the measurement model rather than assumed simultaneous.
 
+The board measures terminal currents through dedicated input/output shunts; it does not contain a permanent main-inductor-current shunt in the power path.
+
 ### Nominal characteristics
 
 | Parameter | Value |
@@ -122,7 +124,7 @@ The four main control measurements are routed through ADC1 sequential conversion
 | Rated output | 24 V / 5 A |
 | Suggested maximum power | 200 W |
 | Main inductor | 22 µH nominal |
-| Current shunts | 1 mΩ |
+| Terminal-current shunts | R7 / R8, 1 mΩ |
 | Main MOSFETs | BSC070N10NS3G |
 | Gate drivers | Si8233BD-D-IS |
 | Host UART | USART1, PB6 / PB7 |
@@ -149,10 +151,10 @@ d1 = Q1 left-leg high-side duty
 d2 = Q3 right-leg low-side duty
 ```
 
-The right-leg high-side effective duty is therefore:
+Effective-duty coordinates are therefore:
 
 ```text
-e1 = d1
+e1 = d1 = Q1 left-leg high-side effective duty
 e2 = 1 - d2 = Q2 right-leg high-side effective duty
 ```
 
