@@ -98,8 +98,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,san
 
 <text class="ts" x="164" y="180" text-anchor="end" dominant-baseline="central">PWM1H</text>
 <text class="ts" x="164" y="360" text-anchor="end" dominant-baseline="central">PWM1L</text>
-<text class="ts" x="507" y="154" text-anchor="middle">PWM2H</text>
-<text class="ts" x="507" y="334" text-anchor="middle">PWM2L</text>
+<text class="ts" x="515" y="180" dominant-baseline="central">PWM2H</text>
+<text class="ts" x="515" y="360" dominant-baseline="central">PWM2L</text>
 
 <text class="ts" x="370" y="252" text-anchor="middle">L1 22 µH</text>
 <text class="ts" x="232" y="296">SW_A</text>
