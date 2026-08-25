@@ -82,6 +82,16 @@ The target board is the CBB024D / CBB02405D V1.2 four-switch synchronous bidirec
 
 ### Switch mapping
 
+```text
+Left leg:
+Q1 = high-side
+Q4 = low-side
+
+Right leg:
+Q2 = high-side
+Q3 = low-side
+```
+
 | Function | Device / MCU pin |
 | --- | --- |
 | Left high-side | Q1 / PA8 `PWM1H` |
@@ -128,15 +138,22 @@ Port A = physical left / schematic VIN side
 Port B = physical right / schematic VOUT side
 ```
 
-Project sign conventions:
+Project sign and duty conventions:
 
 ```text
 Iin  > 0 : current enters the converter from Port A
 Iout > 0 : current leaves the converter into Port B
 iL   > 0 : inductor current flows left → right
 
-d1 = Q1 left high-side logical duty
-d2 = Q3 right low-side logical duty
+d1 = Q1 left-leg high-side duty
+d2 = Q3 right-leg low-side duty
+```
+
+The right-leg high-side effective duty is therefore:
+
+```text
+e1 = d1
+e2 = 1 - d2 = Q2 right-leg high-side effective duty
 ```
 
 The CCM averaged model is:
