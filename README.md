@@ -286,7 +286,7 @@ A temporary external inductor-current measurement may be used during development
 
 ---
 
-## 🧪 Four-Phase Development Path
+## 🧪 Experimental Validation Path
 
 Basic implementation plumbing such as startup GPIO state, UART, HRTIM setup, ADC/DMA drivers, protocol support, CI, and minimum shutdown infrastructure is required work but is not treated as a research result.
 
