@@ -74,6 +74,51 @@ The research value is not in proving that a bidirectional buck-boost converter w
 
 ---
 
+## 🔌 Hardware Platform
+
+The target board is the CBB024D / CBB02405D V1.2 four-switch synchronous bidirectional buck-boost converter.
+
+![Four-switch bidirectional buck-boost topology](docs/images/four-switch-bidirectional-buck-boost-topology.svg)
+
+### Switch mapping
+
+| Function | Device / MCU pin |
+| --- | --- |
+| Left high-side | Q1 / PA8 `PWM1H` |
+| Left low-side | Q4 / PA9 `PWM1L` |
+| Right high-side | Q2 / PA10 `PWM2H` |
+| Right low-side | Q3 / PA11 `PWM2L` |
+
+### Measurement mapping
+
+| Signal | MCU pin |
+| --- | --- |
+| `Vin` | PA0 |
+| `Iin` | PA1 |
+| `Vout` | PA2 |
+| `Iout` | PA3 |
+| `VADJ` | PA4 |
+
+The four main control measurements are routed through ADC1 sequential conversion, so sample order and per-channel timing are part of the measurement model rather than assumed simultaneous.
+
+### Nominal characteristics
+
+| Parameter | Value |
+| --- | --- |
+| MCU | STM32F334C8T6 |
+| Switching rate | 200 kHz |
+| Input voltage | 12–48 VDC |
+| Output voltage | 5–48 VDC |
+| Rated output | 24 V / 5 A |
+| Suggested maximum power | 200 W |
+| Main inductor | 22 µH nominal |
+| Current shunts | 1 mΩ |
+| Main MOSFETs | BSC070N10NS3G |
+| Gate drivers | Si8233BD-D-IS |
+| Host UART | USART1, PB6 / PB7 |
+
+---
+
 ## 🧱 Canonical Converter Model
 
 Physical ports are fixed:
@@ -281,51 +326,6 @@ The same control semantics are retained for A → B and B → A power flow. Dire
 Implement the `e1/e2` line-segment allocator, enforce hard duty constraints, and validate continuous operation across the intended CCM voltage-ratio and power-flow envelope.
 
 The phase is complete when controller output, allocator behavior, realized `vL`, duty continuity, saturation handling, and direction reversal are experimentally coherent on the real converter.
-
----
-
-## 🔌 Hardware Platform
-
-The target board is the CBB024D / CBB02405D V1.2 four-switch synchronous bidirectional buck-boost converter.
-
-![Four-switch bidirectional buck-boost topology](docs/images/four-switch-bidirectional-buck-boost-topology.svg)
-
-### Switch mapping
-
-| Function | Device / MCU pin |
-| --- | --- |
-| Left high-side | Q1 / PA8 `PWM1H` |
-| Left low-side | Q4 / PA9 `PWM1L` |
-| Right high-side | Q2 / PA10 `PWM2H` |
-| Right low-side | Q3 / PA11 `PWM2L` |
-
-### Measurement mapping
-
-| Signal | MCU pin |
-| --- | --- |
-| `Vin` | PA0 |
-| `Iin` | PA1 |
-| `Vout` | PA2 |
-| `Iout` | PA3 |
-| `VADJ` | PA4 |
-
-The four main control measurements are routed through ADC1 sequential conversion, so sample order and per-channel timing are part of the measurement model rather than assumed simultaneous.
-
-### Nominal characteristics
-
-| Parameter | Value |
-| --- | --- |
-| MCU | STM32F334C8T6 |
-| Switching rate | 200 kHz |
-| Input voltage | 12–48 VDC |
-| Output voltage | 5–48 VDC |
-| Rated output | 24 V / 5 A |
-| Suggested maximum power | 200 W |
-| Main inductor | 22 µH nominal |
-| Current shunts | 1 mΩ |
-| Main MOSFETs | BSC070N10NS3G |
-| Gate drivers | Si8233BD-D-IS |
-| Host UART | USART1, PB6 / PB7 |
 
 ---
 
