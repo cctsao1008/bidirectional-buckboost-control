@@ -1,4 +1,4 @@
-# Bidirectional Buck-Boost Control
+# ⚡ Bidirectional Buck-Boost Control
 
 A digital-power research platform for a four-switch, non-isolated, bidirectional buck-boost converter based on the STM32F334.
 
@@ -8,7 +8,7 @@ The project starts from a vendor-proven power stage and focuses on the control a
 
 ---
 
-## Project Goal
+## 🧭 Project Goal
 
 Build one coherent control architecture for both directions of power flow without duplicating Buck, Mixed, and Boost control logic.
 
@@ -44,7 +44,7 @@ The design keeps physical port identities fixed, represents power-flow direction
 
 ---
 
-## Canonical Converter Model
+## 🧱 Canonical Converter Model
 
 Physical ports are fixed:
 
@@ -82,7 +82,7 @@ The initial control scope is continuous-conduction operation. Buck, Mixed, and B
 
 ---
 
-## Vendor Architecture vs This Architecture
+## 🔀 Vendor Architecture vs This Architecture
 
 The vendor reference architecture and this project solve the same four-switch power stage from different abstractions.
 
@@ -151,7 +151,7 @@ For the detailed comparison, see [`docs/design/vendor-architecture-comparison.md
 
 ---
 
-## Effective-Duty Coordinates
+## 🎛️ Effective-Duty Coordinates
 
 The allocator uses effective duty coordinates:
 
@@ -223,7 +223,7 @@ Movement along this direction redistributes the two effective duties without cha
 
 ---
 
-## Inductor-Current Estimation
+## 🧠 Inductor-Current Estimation
 
 The board measures terminal currents but does not provide a dedicated ADC channel for main-inductor current.
 
@@ -261,7 +261,7 @@ A temporary external inductor-current measurement may be used during development
 
 ---
 
-## Four-Phase Development Path
+## 🧪 Four-Phase Development Path
 
 Basic implementation plumbing such as startup GPIO state, UART, HRTIM setup, ADC/DMA drivers, protocol support, CI, and minimum shutdown infrastructure is required work but is not treated as a research result.
 
@@ -323,7 +323,7 @@ The phase is complete when controller output, allocator behavior, realized `vL`,
 
 ---
 
-## Hardware Platform
+## 🔌 Hardware Platform
 
 The target board is the CBB024D / CBB02405D V1.2 four-switch synchronous bidirectional buck-boost converter.
 
@@ -368,7 +368,7 @@ The four main control measurements are routed through ADC1 sequential conversion
 
 ---
 
-## Firmware Architecture
+## 💻 Firmware Architecture
 
 The firmware is deterministic bare-metal C. libopencm3 provides the low-level peripheral layer; CMSIS-DSP may be used for numerical primitives where useful.
 
@@ -406,7 +406,7 @@ High-rate experiment capture is stored in compact MCU buffers and transferred af
 
 ---
 
-## Safety Boundary
+## 🛡️ Safety Boundary
 
 The converter operates with significant voltage, current, switching energy, and stored energy. Control development therefore assumes staged, low-energy bring-up before broader closed-loop testing.
 
@@ -437,7 +437,7 @@ Do not rely on online SWD debugging while the power stage is energized. Halting 
 
 ---
 
-## Repository Layout
+## 🗂️ Repository Layout
 
 ```text
 docs/
@@ -465,7 +465,7 @@ tools/
 
 ---
 
-## Documentation
+## 📚 Documentation
 
 [`docs/design/README.md`](docs/design/README.md) defines the design-document source-of-truth hierarchy.
 
@@ -484,7 +484,7 @@ Current progress is tracked through GitHub Issues and commits rather than embedd
 
 ---
 
-## Vendor Reference Material
+## 🧰 Vendor Reference Material
 
 Vendor schematics, firmware, reports, examples, and manuals are treated as engineering reference evidence for physical mapping, timing, scaling, and known-good board behavior.
 
