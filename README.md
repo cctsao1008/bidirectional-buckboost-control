@@ -329,44 +329,6 @@ The four main control measurements are routed through ADC1 sequential conversion
 
 ---
 
-## 💻 Firmware Architecture
-
-The firmware is deterministic bare-metal C. libopencm3 provides the low-level peripheral layer; CMSIS-DSP may be used for numerical primitives where useful.
-
-```text
-Application / Power Manager
-        ↓
-Control / Estimation
-        ↓
-Continuous Allocation
-        ↓
-Platform / HRTIM / ADC
-        ↓
-libopencm3
-        ↓
-STM32F334
-```
-
-The hard real-time path stays entirely on the MCU.
-
-Host communication is supervisory and diagnostic:
-
-```text
-Host CLI
-   ↓
-COBS + CRC16
-   ↓
-USB-UART / USART1
-   ↓
-telemetry / capture / qualified requests
-```
-
-In the target architecture, host commands request state changes through the Power Manager; they never directly command MOSFET states.
-
-High-rate experiment capture is stored in compact MCU buffers and transferred after capture rather than streamed as switching-cycle telemetry over UART.
-
----
-
 ## 🛡️ Safety Boundary
 
 The converter operates with significant voltage, current, switching energy, and stored energy. Control development therefore assumes staged, low-energy bring-up before broader closed-loop testing.
