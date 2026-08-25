@@ -360,34 +360,6 @@ Do not rely on online SWD debugging while the power stage is energized. Halting 
 
 ---
 
-## 🗂️ Repository Layout
-
-```text
-docs/
-  design/       architecture and design specifications
-  images/       project-owned diagrams
-
-firmware/
-  app/          application entry points and host service
-  control/      estimator, controllers, and allocator
-  platform/     STM32F334 peripheral implementation
-  power/        calibrated measurements and power-domain abstractions
-  protocol/     MCU-independent COBS/CRC protocol
-  safety/       Power Manager and shutdown authority
-
-test/
-  power/        measurement/scaling tests
-  protocol/     host-protocol tests
-  control_loop/ estimator/controller/allocator tests
-  protection/   state/protection tests
-
-tools/
-  analysis/     offline analysis and experiment processing
-  host_cli.py   host-side UART client
-```
-
----
-
 ## 📚 Documentation
 
 [`docs/design/README.md`](docs/design/README.md) defines the design-document source-of-truth hierarchy.
