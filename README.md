@@ -375,11 +375,3 @@ Key specifications:
 - [`host-interface-and-uart-protocol.md`](docs/design/host-interface-and-uart-protocol.md) — host wire protocol
 
 Current progress is tracked through GitHub Issues and commits rather than embedded in stable architecture documentation.
-
----
-
-## 🧰 Vendor Reference Material
-
-Vendor schematics, firmware, reports, examples, and manuals are treated as engineering reference evidence for physical mapping, timing, scaling, and known-good board behavior.
-
-The project does not repeat the vendor tutorial sequence as research work. The vendor-proven power stage is the starting point for the control architecture described here.
