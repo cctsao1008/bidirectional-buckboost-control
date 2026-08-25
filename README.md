@@ -8,6 +8,46 @@ The project starts from a vendor-proven power stage and focuses on the control a
 
 ---
 
+## ✨ Why This Is Interesting
+
+A four-switch bidirectional buck-boost converter is not difficult because Buck, Boost, or Mixed operation is unknown. Those operating modes are well understood, and the vendor firmware already demonstrates that this hardware can regulate power successfully.
+
+The interesting question is whether the converter really needs to be controlled as three separate operating regions.
+
+This project explores a different abstraction:
+
+- keep the physical ports fixed;
+- represent power-flow direction with signed quantities;
+- estimate the main-inductor current without adding a permanent current sensor;
+- let the controller request average inductor voltage rather than a mode-specific duty;
+- exploit the redundant four-switch duty space through a continuous constrained allocator.
+
+This turns several practical implementation problems into one coherent control problem:
+
+```text
+mode switching
+      ↓
+continuous state-space behavior
+
+missing iL sensor
+      ↓
+state estimation
+
+multiple valid duty pairs
+      ↓
+constrained allocation
+
+forward / reverse operation
+      ↓
+signed physical states
+```
+
+The research value is therefore not in proving that a bidirectional buck-boost converter works.
+
+It is in testing whether the same power stage can be controlled with a simpler, continuous, physically unified architecture.
+
+---
+
 ## 🧭 Project Goal
 
 Build one coherent control architecture for both directions of power flow without duplicating Buck, Mixed, and Boost control logic.
