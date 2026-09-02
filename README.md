@@ -2,7 +2,7 @@
 
 A digital-power research platform for a four-switch, non-isolated, bidirectional buck-boost converter based on the STM32F334.
 
-The project starts from a vendor-proven power stage and focuses on the control architecture that remains technically interesting after basic converter operation is already known to work: synchronized measurement, inductor-current state estimation without a permanent `iL` sensor, unified bidirectional control, and continuous constrained duty allocation.
+The project starts from a vendor-proven power stage and focuses on synchronized measurement, inductor-current state estimation without a permanent `iL` sensor, unified bidirectional control, and continuous constrained duty allocation.
 
 > **Validate the implementation delta, not the vendor-proven baseline.**
 
@@ -10,9 +10,7 @@ The project starts from a vendor-proven power stage and focuses on the control a
 
 ## ✨ Why This Is Interesting
 
-A four-switch bidirectional buck-boost converter is not difficult because Buck, Boost, or Mixed operation is unknown. Those operating modes are well understood, and the hardware is already known to regulate power successfully.
-
-The interesting question is whether the converter really needs to be controlled as three separate operating regions.
+A four-switch bidirectional buck-boost converter can be described through Buck, Boost, and Mixed operating regions, but those regions do not have to become separate control-architecture states.
 
 This project explores a unified physical-state architecture that:
 
@@ -21,8 +19,6 @@ This project explores a unified physical-state architecture that:
 - estimates the main-inductor current without adding a permanent `iL` sensor;
 - lets the controller request average inductor voltage `vL*` rather than a mode-specific duty;
 - exploits the redundant four-switch duty space through a continuous constrained `e1/e2` allocator.
-
-This turns several practical implementation problems into one coherent control problem:
 
 ```text
 mode switching
@@ -42,7 +38,7 @@ forward / reverse operation
 signed physical states
 ```
 
-The target control path is:
+The control path is:
 
 ```text
 PWM-synchronized sensing
@@ -69,8 +65,6 @@ HRTIM
         ↓
 four-switch power stage
 ```
-
-The research value is not in proving that a bidirectional buck-boost converter works. It is in testing whether the same power stage can be controlled with a simpler, continuous, and physically unified architecture.
 
 ---
 
@@ -151,7 +145,7 @@ d1 = Q1 left-leg high-side duty
 d2 = Q3 right-leg low-side duty
 ```
 
-Effective-duty coordinates are therefore:
+Effective-duty coordinates are:
 
 ```text
 e1 = d1 = Q1 left-leg high-side effective duty
@@ -172,7 +166,7 @@ The controller requests average inductor voltage:
 d1 Vin - (1 - d2) Vout = vL*
 ```
 
-The initial control scope is continuous-conduction operation. Buck, Mixed, and Boost remain useful descriptions of operating points, but they are not explicit control-architecture states.
+The control scope is continuous-conduction operation. Buck, Mixed, and Boost remain useful descriptions of operating points, but they are not explicit control-architecture states.
 
 ---
 
@@ -202,7 +196,7 @@ a^T e = vL*
 
 For one requested `vL*`, the feasible solutions form a line in the `(e1,e2)` plane. Duty, minimum-pulse, and bootstrap limits reduce the admissible region to a bounded box.
 
-The allocator therefore solves a deterministic geometric problem:
+The allocator solves:
 
 ```text
 requested vL*
@@ -218,7 +212,7 @@ d1 = e1
 d2 = 1 - e2
 ```
 
-The initial secondary objective is minimum command movement:
+The secondary objective is minimum command movement:
 
 ```text
 minimize
@@ -244,7 +238,7 @@ because:
 [ Vin, -Vout ] · [ Vout, Vin ] = 0
 ```
 
-Movement along this direction redistributes the two effective duties without changing the requested average inductor voltage. The baseline implementation uses this redundant degree of freedom only to preserve continuity and minimize duty movement.
+Movement along this direction redistributes the two effective duties without changing the requested average inductor voltage. The baseline implementation uses this redundant degree of freedom to preserve continuity and minimize duty movement.
 
 ---
 
@@ -252,7 +246,7 @@ Movement along this direction redistributes the two effective duties without cha
 
 The board measures terminal currents but does not provide a dedicated ADC channel for main-inductor current.
 
-The estimator therefore uses a physics predictor as the fast path:
+The estimator uses a physics predictor as the fast path:
 
 ```text
 vL_realized
@@ -278,81 +272,19 @@ The fast predictor is driven by the **realized** allocator output rather than th
 vL_realized = Vin e1 - Vout e2
 ```
 
-This keeps the estimator consistent with the duty commands actually sent to the power stage, including allocator saturation.
+This keeps the estimator consistent with the duty commands sent to the power stage, including allocator saturation.
 
-Terminal-current algebraic relationships are treated as correction information, not as per-cycle ground truth. Their usefulness depends on duty conditioning, capacitor-current dynamics, ADC noise, and sequential-sampling skew.
+Terminal-current algebraic relationships are correction information rather than per-cycle ground truth. Their usefulness depends on duty conditioning, capacitor-current dynamics, ADC noise, and sequential-sampling skew.
 
-A temporary external inductor-current measurement may be used during development to validate `iL_hat`; it is not part of the final control architecture.
-
----
-
-## 🧪 Experimental Validation Path
-
-Basic implementation plumbing such as startup GPIO state, UART, HRTIM setup, ADC/DMA drivers, protocol support, CI, and minimum shutdown infrastructure is required work but is not treated as a research result.
-
-### Phase 1 — Synchronized Measurement
-
-Establish deterministic measurement timing and capture:
-
-```text
-HRTIM trigger
-    ↓
-ADC1 scan + DMA
-    ↓
-coherent raw frame
-    ↓
-signed calibrated measurements
-    ↓
-indexed capture
-```
-
-Key outputs are known sample timing, quantified channel skew/noise, repeatable current offsets, and reliable signed `Vin/Iin/Vout/Iout` data.
-
-### Phase 2 — Inductor-Current State Estimation
-
-Implement and validate:
-
-```text
-fast physics predictor
-        +
-slow conditioned correction
-        ↓
-iL_hat
-```
-
-Validation uses synchronized converter data and a development-only external `iL` reference where required.
-
-### Phase 3 — Unified Bidirectional Control
-
-Build one cascaded control path around the estimated inductor current:
-
-```text
-voltage reference
-      ↓
-voltage controller
-      ↓
-iL_ref
-      ↓
-current controller
-      ↓
-vL*
-```
-
-The same control semantics are retained for A → B and B → A power flow. Direction is represented by signed current, power, and references rather than by remapping physical ports or timer ownership.
-
-### Phase 4 — Continuous Allocation & Validation
-
-Implement the `e1/e2` line-segment allocator, enforce hard duty constraints, and validate continuous operation across the intended CCM voltage-ratio and power-flow envelope.
-
-The phase is complete when controller output, allocator behavior, realized `vL`, duty continuity, saturation handling, and direction reversal are experimentally coherent on the real converter.
+A temporary external inductor-current measurement can provide an independent reference for `iL_hat` during hardware characterization.
 
 ---
 
 ## 🛡️ Safety Boundary
 
-The converter operates with significant voltage, current, switching energy, and stored energy. Control development therefore assumes staged, low-energy bring-up before broader closed-loop testing.
+The converter operates with significant voltage, current, switching energy, and stored energy. Control development uses staged, low-energy bring-up before broader closed-loop operation.
 
-Before energized switching, the implementation must provide at least:
+Before energized switching, the implementation provides:
 
 ```text
 safe GPIO startup state
@@ -368,12 +300,12 @@ Power Manager enable authority
 fault / shutdown authority over PWM
 ```
 
-The current board has two important hardware limitations:
+The board has two important hardware limits:
 
 - the Si8233 gate-driver `DISABLE` input is not MCU-controlled;
 - the existing current-sense outputs are not directly routed to STM32F334 comparator inputs for a hardware-speed overcurrent path.
 
-These constraints are treated as real hardware limits during experiment planning. Software protection and HRTIM shutdown do not substitute for an unavailable independent analog fault path.
+Software protection and HRTIM shutdown therefore remain distinct from an independent analog fault path.
 
 Do not rely on online SWD debugging while the power stage is energized. Halting the MCU can leave PWM-related hardware in an unsafe condition. High-side gate and switching-node measurements require appropriate differential or isolated instrumentation.
 
@@ -392,5 +324,3 @@ Key specifications:
 - [`modulation-and-operating-regions.md`](docs/design/modulation-and-operating-regions.md) — duty realization and constraints
 - [`protection-and-state-machine.md`](docs/design/protection-and-state-machine.md) — Power Manager and shutdown policy
 - [`host-interface-and-uart-protocol.md`](docs/design/host-interface-and-uart-protocol.md) — host wire protocol
-
-Current progress is tracked through GitHub Issues and commits rather than embedded in stable architecture documentation.
