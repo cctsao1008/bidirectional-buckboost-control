@@ -2,9 +2,7 @@
 
 ## Purpose
 
-This document is the canonical definition of the project’s physical naming, sign conventions, and duty variables. Models, firmware, telemetry, estimators, controllers, tests, and host tools must follow these definitions.
-
-The CBB024D V1.2 schematic is the physical source of truth. Vendor examples 12 and 13 are useful reference implementations, but their forward/reverse channel-remapping strategy is not adopted by this project.
+This document is the canonical definition of physical naming, sign conventions, and duty coordinates. Models, firmware, telemetry, estimators, controllers, tests, and host tools use these definitions.
 
 ## Physical bridge mapping
 
@@ -26,8 +24,6 @@ The CBB024D V1.2 schematic is the physical source of truth. Vendor examples 12 a
 | PA10 | `PWM2H` | Q2, right high-side |
 | PA11 | `PWM2L` | Q3, right low-side |
 
-Older conceptual vendor diagrams that imply different half-bridge pairings must not override this mapping.
-
 ## Port naming
 
 ```text
@@ -44,8 +40,6 @@ Vin  = VA+ - VA-
 Vout = VB+ - VB-
 ```
 
-Both are normally non-negative board-terminal voltages.
-
 ## Current convention
 
 ```text
@@ -56,42 +50,26 @@ Iout > 0 : current leaves the converter into Port B
 Therefore:
 
 ```text
-Forward A -> B : Iin > 0, Iout > 0
-Reverse B -> A : Iin < 0, Iout < 0
+A -> B power flow : Iin > 0, Iout > 0
+B -> A power flow : Iin < 0, Iout < 0
 ```
 
-Negative current values are valid measurements and must not be clipped by the common sensing layer.
-
-The physical polarity of each populated shunt/amplifier path must be verified once against this convention during measurement bring-up. After that, calibration may correct sign/gain/offset but must not reinterpret channels according to direction.
+Negative current is valid and is never clipped or reinterpreted by direction-dependent channel swapping.
 
 ## Power convention
 
 ```text
 Pin  = Vin  * Iin
 Pout = Vout * Iout
+
+dE/dt = Pin - Pout - Ploss
 ```
 
 With the current convention above:
 
 ```text
-Forward power flow : Pin > 0, Pout > 0
-Reverse power flow : Pin < 0, Pout < 0
-```
-
-Energy balance is written as:
-
-```text
-dE/dt = Pin - Pout - Ploss
-```
-
-Example reverse steady state:
-
-```text
-Port B supplies 100 W -> Pout = -100 W
-Port A receives 95 W  -> Pin  = -95 W
-Loss                  -> 5 W
-
-Pin - Pout - Ploss = -95 - (-100) - 5 = 0
+A -> B : Pin > 0, Pout > 0
+B -> A : Pin < 0, Pout < 0
 ```
 
 ## Inductor-current convention
@@ -101,25 +79,21 @@ Pin - Pout - Ploss = -95 - (-100) - 5 = 0
 Port A  -------------------->  Port B
 ```
 
-Thus:
-
 ```text
 iL > 0 : left-to-right inductor current
 iL < 0 : right-to-left inductor current
 ```
 
-The board has no direct ADC channel for `iL`. Controllers that require it consume the reconstructed state `iL_hat`.
+The board has no direct ADC channel for `iL`. Control functions that require it use `iL_hat`.
 
-## Canonical duty convention
-
-Project documents use lower-case `d1` and `d2`:
+## Duty convention
 
 ```text
-d1 = average on-time fraction of Q1, left high-side switch
-d2 = average on-time fraction of Q3, right low-side switch
+d1 = average on-time fraction of Q1, left high-side
+d2 = average on-time fraction of Q3, right low-side
 ```
 
-The corresponding ideal averaged inductor equation is:
+The ideal CCM averaged inductor equation is:
 
 ```text
 L diL/dt = d1 Vin - (1 - d2) Vout
@@ -131,45 +105,50 @@ At ideal steady state:
 Vout / Vin = d1 / (1 - d2)
 ```
 
-Some vendor documents use uppercase `D1` / `D2`; when those quantities refer to the same logical duties, they map to project `d1` / `d2`. Project-owned documentation should use the lower-case notation consistently.
-
-The modulation layer translates logical `d1` / `d2` into physical HRTIM compare values, complementary outputs, dead time, minimum pulse behavior, and bootstrap-compatible gate commands. Controllers must not depend on timer polarity or compare-register encoding.
-
-## Direction and operating region are separate concepts
-
-Power-flow direction and Buck/Mixed/Boost operating region are not synonyms.
+Effective-duty coordinates are:
 
 ```text
-power-flow direction : A->B or B->A
-operating region     : Buck / Mixed / Boost
+e1 = d1
+e2 = 1 - d2
 ```
 
-A single firmware image must preserve the same physical ADC and switch mapping in both directions. Direction is represented by references, measured signs, Power Manager policy, estimator state, and modulation behavior.
-
-## Host implications
-
-Current wire fields retain board names:
+so:
 
 ```text
-vin_mV   : unsigned
-vout_mV  : unsigned
-iin_mA   : signed
-iout_mA  : signed
+L diL/dt = Vin e1 - Vout e2
 ```
 
-Future `iL` telemetry must be signed. Direction-neutral UI may label the terminals Port A and Port B while retaining the existing wire names for compatibility.
+The controller actuation coordinate is desired average inductor voltage `vL*`; modulation owns conversion to realizable `e1/e2` and `d1/d2`.
+
+## Direction and operating region
+
+Power-flow direction and operating region are independent concepts:
+
+```text
+power-flow direction : A -> B or B -> A
+operating description: Buck-like / Mixed-like / Boost-like
+```
+
+Port identity, ADC mapping, and switch ownership never change with direction.
+
+## Host field semantics
+
+```text
+vin_mV   : unsigned Port A voltage
+iin_mA   : signed Port A current
+vout_mV  : unsigned Port B voltage
+iout_mA  : signed Port B current
+```
+
+Any `iL` telemetry is signed using the left-to-right convention.
 
 ## Mandatory rules
 
 1. ADC acquisition never swaps physical channels because power direction changes.
-2. Calibration never clips valid negative current.
-3. `iL_hat` follows the fixed left-to-right sign convention.
+2. Calibration preserves valid negative current.
+3. `iL_hat` uses the fixed left-to-right sign convention.
 4. Controllers operate on physical/logical quantities, not raw HRTIM register semantics.
-5. Modulation owns `d1` / `d2` realization, timing, dead time, minimum pulse, and bootstrap constraints.
-6. Power Manager owns whether a requested energy-flow direction is permitted.
+5. Modulation owns duty realization, timing, dead time, minimum pulse, and bootstrap constraints.
+6. Power Manager owns whether switching and requested energy flow are permitted.
 7. Protection evaluates signed physical quantities explicitly.
-8. New documentation must reference this file instead of redefining current, power, or duty signs independently.
-
-## Vendor reference evidence
-
-Vendor example 12 interprets ADC1 as `Vin`, `Iin`, `Vout`, `Iout` for forward operation. Vendor example 13 changes application interpretation and reverses current-offset handling for reverse operation, and it changes which timer receives the Buck/Boost update. That proves useful hardware capability, but the project intentionally replaces application-specific remapping with the fixed conventions above.
+8. Other documents reference these conventions instead of redefining them.

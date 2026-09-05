@@ -2,11 +2,9 @@
 
 ## Purpose
 
-This document defines the measurement path from ADC codes to calibrated physical quantities. It owns acquisition/scaling semantics, not estimator design and not current/power sign conventions.
+This document defines the measurement path from ADC codes to calibrated physical quantities. Sign conventions are owned by `control-conventions.md`; estimator design is owned by `current-observability-and-estimation.md`.
 
-Canonical signs are defined in `control-conventions.md` and must not be redefined locally.
-
-## Measurement Channels
+## Measurement channels
 
 | MCU pin | Signal | Physical quantity |
 | --- | --- | --- |
@@ -14,120 +12,101 @@ Canonical signs are defined in `control-conventions.md` and must not be redefine
 | PA1 | `ADC_Iin` | Port A current |
 | PA2 | `ADC_Vout` | Port B voltage |
 | PA3 | `ADC_Iout` | Port B current |
-| PA4 | `ADC_VADJ` | local potentiometer/reference input |
+| PA4 | `ADC_VADJ` | local reference input |
 
-The board provides no dedicated ADC channel for main-inductor current `iL`.
+The board has no dedicated ADC channel for main-inductor current `iL`.
 
-## Canonical Current Meaning
-
-Per `control-conventions.md`:
+## Current semantics
 
 ```text
 Iin  > 0 : current enters the converter from Port A
 Iout > 0 : current leaves the converter into Port B
 ```
 
-Reverse power flow therefore produces valid negative current values. The common sensing layer must never clip them to zero.
+Negative current is valid. Direction changes never swap ADC channels or alter sign definitions.
 
-The physical polarity of each shunt/amplifier channel must be verified once during measurement bring-up, then encoded in calibration. Direction changes never swap ADC channels.
-
-## Nominal Voltage Scaling
-
-The voltage-conditioning network has an approximate ratio:
+## Nominal voltage scaling
 
 ```text
 Kv = 3.3 kΩ / 68 kΩ
    ≈ 0.04853
-```
 
-Nominal conversion:
-
-```text
 Vadc  ≈ Kv * Vport
 Vport ≈ Vadc / Kv
 ```
 
-A nominal 3.3 V ADC full scale corresponds to about 68 V at the sense input. This is a signal-conditioning full-scale estimate, not a converter operating-voltage rating.
+A nominal 3.3 V ADC input corresponds to approximately 68 V at the sense input. This is sensing range, not converter operating rating.
 
-## Nominal Bidirectional Current Scaling
+## Nominal current scaling
 
 Each terminal-current path uses a 1 mΩ shunt and approximately 150 V/V differential gain:
 
 ```text
 Ki = 150 * 1 mΩ
    = 0.150 V/A
+
+Vadc = Vbias + Ki * I
+Vbias ≈ 1.65 V
 ```
 
-The current channels are centered around a nominal 1.65 V bias:
-
-```text
-Vadc = 1.65 + Ki * I
-I    = (Vadc - 1.65) / Ki
-```
-
-Nominal examples:
-
-| Current | ADC voltage |
+| Current | Nominal ADC voltage |
 | ---: | ---: |
 | -5 A | 0.90 V |
 | 0 A | 1.65 V |
 | +5 A | 2.40 V |
 
-Measured offset and gain supersede the nominal values in firmware.
+Measured calibration supersedes nominal gain and offset.
 
-## ADC-Code Conversion
+## ADC-code conversion
 
-For the 12-bit STM32F334 ADC:
+For a 12-bit ADC:
 
 ```text
 Vadc = adc_code * Vref / 4095
 ```
 
-Nominal voltage channel:
+Nominal voltage conversion:
 
 ```text
 Vport = adc_code * Vref / 4095 / Kv
 ```
 
-Nominal current channel:
+Nominal current conversion:
 
 ```text
 I = (adc_code * Vref / 4095 - Vbias) / Ki
 ```
 
-The implementation should not assume exact 3.300 V reference, exact resistor ratios, or exact 1.650 V current bias when calibrated values are available.
+Firmware does not assume exact 3.300 V, exact resistor ratios, or exact 1.650 V bias when calibrated values are available.
 
-## Calibration Model
+## Calibration representation
 
-The preferred per-channel representation is affine:
+Each channel uses an affine calibrated representation:
 
 ```text
 physical_value = scale * adc_code + offset
 ```
 
-Calibration records should contain, as applicable:
+Calibration data identifies:
 
 ```text
-channel identity
+channel
 scale
 offset
 polarity
-calibration dataset/revision
+calibration identity
 calibration conditions
-optional temperature metadata
 ```
 
-Calibration is a sensing concern. Controllers and estimators consume already calibrated physical quantities.
+Controllers and estimators consume calibrated physical quantities only.
 
-## Zero-Current Calibration
+## Zero-current calibration
 
-Both current channels require a measured zero-current offset. A startup/waiting-state average similar to the vendor reference approach is useful, but the independent implementation must explicitly define when the converter is guaranteed to be at zero current and whether pre-biased/reverse-power conditions invalidate that assumption.
+Current-offset calibration is valid only when the system can assert a zero-current condition. Pre-biased or externally energized terminals invalidate an automatic zero-current assumption.
 
-Zero-current calibration must never silently run when energy may already be flowing.
+The calibration layer never silently forces the current estimate to zero while energy may be flowing.
 
-## Analog Measurement Path
-
-The effective measurement plant is:
+## Analog measurement path
 
 ```text
 physical quantity
@@ -140,78 +119,69 @@ analog RC network
       ↓
 ADC sample-and-hold
       ↓
-scan/conversion latency
+scan / conversion latency
       ↓
 DMA
       ↓
-calibration / optional digital filtering
+calibration / bounded filtering
 ```
 
-The op-amp datasheet bandwidth alone is not the sensing bandwidth. Common-mode behavior, settling, resistor mismatch, ADC loading, filter phase, and PWM-synchronous disturbance can matter.
+The effective sensing transfer function includes analog settling, RC filtering, ADC loading, conversion timing, and PWM-synchronous disturbance.
 
-## PWM-Synchronized Acquisition
+## PWM-synchronized acquisition
 
-The final acquisition architecture is synchronized with HRTIM rather than free-running background sampling.
+The acquisition architecture is synchronized to HRTIM.
 
-The implementation must document:
+Each measurement set has defined:
 
 ```text
 PWM frequency
 ADC trigger source
-trigger phase within the switching period
+trigger phase
 channel conversion order
 sample time
 conversion latency
 DMA completion point
-measurement-set timestamp semantics
-control-loop consume point
+timestamp semantics
+control consume point
 ```
 
-A measurement set must have a well-defined relationship to the `d1` / `d2` command and switching period that produced it.
+The four ADC1 channels are sequential conversions and are not modeled as simultaneous samples.
 
-## Sampling-Phase Policy
+## Sampling-phase policy
 
-Sampling phase is selected to support the new estimator/controller, not to reproduce a vendor waveform. The useful point should minimize deterministic switching contamination while preserving known ripple phase and bounded control latency.
+The sample phase is selected to provide a deterministic relationship to the switching state while avoiding switching-edge disturbance. If the available quiet window changes with duty allocation, the measurement model retains the resulting phase/skew rather than assuming ideal simultaneous values.
 
-If Buck/Mixed/Boost modulation changes the quiet sampling window, the acquisition layer must either schedule the trigger accordingly or document the resulting measurement error.
+## Digital filtering
 
-## Digital Filtering
+Any digital filter in the control path has explicit bandwidth and delay. Filtering does not redefine calibration, hide ADC saturation, or compensate for unknown sample timing.
 
-Filtering is added only when needed. Every digital filter used in the control path must publish its delay/phase effect. Filtering must not be used to hide bad sample timing, unknown gain, or ADC saturation.
-
-## Estimation Boundary
+## Estimator boundary
 
 ```text
-ADC/DMA
+ADC / DMA
    ↓
 calibrated Vin / Iin / Vout / Iout
    ↓
-optional bounded filtering
+bounded filtering
    ↓
 state estimator
    ↓
-iL_hat / estimator confidence
+iL_hat + confidence
    ↓
 controller
 ```
 
-`current-observability-and-estimation.md` owns the `iL_hat` architecture.
+## Measurement validity requirements
 
-## Measurement Validation Required by New Firmware
+A measurement set is valid for closed-loop use only when:
 
-Before a measurement is used for closed-loop control, validate the implementation delta:
+- channel mapping is fixed and correct;
+- current polarity follows the canonical convention;
+- gain/offset calibration is valid;
+- signed current is not clipped;
+- ADC values are within defined plausibility/saturation bounds;
+- sample phase and channel latency are deterministic;
+- data timestamp/period association is defined.
 
-- correct channel mapping;
-- zero offset;
-- static gain/polarity;
-- no clipping of valid signed current;
-- ADC saturation/plausibility behavior;
-- deterministic sample phase and channel latency;
-- noise/settling only to the extent required by controller bandwidth;
-- reproducibility across reset/startup.
-
-This is not a requirement to repeat the vendor’s complete hardware characterization.
-
-## Source-of-Truth Rule
-
-Nominal circuit constants belong in the hardware/parameter source. Measured calibration belongs in calibration data. Experiment-specific corrections must not overwrite nominal hardware facts without provenance.
+Invalid sensing propagates explicit validity state to estimator, protection, and Power Manager.

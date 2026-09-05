@@ -2,9 +2,9 @@
 
 ## Purpose
 
-This document defines the timing boundary between STM32F334 HRTIM outputs, Si8233 gate drivers, and the four-switch power stage. The board is already known to operate with vendor firmware; project measurements here are limited to validating the **new implementation delta** and establishing constraints required by new modulation/control code.
+This document defines the timing boundary between STM32F334 HRTIM outputs, Si8233 gate drivers, and the four-switch power stage.
 
-## Physical Mapping
+## Physical mapping
 
 | Signal | MOSFET |
 | --- | --- |
@@ -13,29 +13,27 @@ This document defines the timing boundary between STM32F334 HRTIM outputs, Si823
 | `PWM2H` / PA10 | Q2, right high-side |
 | `PWM2L` / PA11 | Q3, right low-side |
 
-The gate drivers are Si8233BD-D-IS devices with external 10 Ω gate resistors. Driver `DISABLE` is not under MCU control on V1.2.
+The two gate drivers are Si8233BD-D-IS devices with 10 Ω external gate resistors. Driver `DISABLE` is tied inactive and is not under MCU control on V1.2.
 
-## Effective Timing Is a System Quantity
-
-The project distinguishes:
+## Effective timing model
 
 ```text
 commanded HRTIM dead time
         ↓
-driver propagation / internal non-overlap
+driver propagation / internal timing
         ↓
-gate charge/discharge dynamics
+gate charge and discharge
         ↓
 effective gate non-overlap
         ↓
 power-stage commutation interval
 ```
 
-A timer register value is therefore not accepted as proof of effective dead time.
+A timer register value is not equivalent to measured gate non-overlap.
 
-## Timing Ownership
+## Ownership
 
-### HRTIM / platform layer
+### Platform / HRTIM
 
 - PWM period and update synchronization;
 - complementary-output polarity;
@@ -50,39 +48,33 @@ A timer register value is therefore not accepted as proof of effective dead time
 
 - isolated level translation;
 - propagation delay and channel mismatch;
-- local overlap/dead-time behavior;
-- high-side drive and bootstrap behavior.
+- local non-overlap behavior;
+- high-side bootstrap drive.
 
-### Modulation layer
+### Modulation
 
-- legal `d1` / `d2` range;
-- minimum off-time/pulse policy;
-- bootstrap-refresh policy;
-- region transitions;
-- bounded actuation changes.
+- legal `d1/d2` and `e1/e2` range;
+- minimum pulse/off-time policy;
+- bootstrap-refresh constraints;
+- bounded actuation movement;
+- saturation metadata.
 
-## Bootstrap Constraint
+## Bootstrap constraint
 
-The high-side drivers use bootstrap circuitry. A logically static high-side request is not automatically valid indefinitely. Modulation must maintain enough low-side/off-time activity to keep the driver supplied under the actual operating condition.
+High-side drive uses bootstrap circuitry. A static high-side command is therefore subject to minimum refresh/off-time requirements. Modulation treats bootstrap refresh as a hard realizability constraint rather than a controller assumption.
 
-Bootstrap limits are treated as explicit hardware constraints. They should be derived from authoritative device information and confirmed only as needed for the project’s chosen modulation envelope.
-
-## Safe HRTIM Handoff
-
-The mandatory sequence is:
+## Safe HRTIM handoff
 
 ```text
 PA8..PA11 GPIO safe-low
         ↓
-configure HRTIM base/timers
-        ↓
-configure polarity / dead time / fault behavior
+configure HRTIM timebase / polarity / dead time / faults
         ↓
 force all HRTIM outputs inactive
         ↓
 switch PA8..PA11 to HRTIM alternate function
         ↓
-verify inactive outputs
+confirm inactive outputs
         ↓
 Power Manager qualification
         ↓
@@ -91,21 +83,21 @@ explicit PWM enable
 
 Peripheral initialization alone never authorizes switching.
 
-## PWM Update Rules
+## PWM update rules
 
-The implementation must provide:
+The implementation provides:
 
-- synchronized/atomic duty updates;
+- synchronized atomic duty updates;
 - deterministic period-boundary behavior;
-- no unintended complementary overlap;
+- complementary non-overlap;
 - defined enable and disable sequences;
-- bounded minimum and maximum pulse width;
-- fault authority that overrides controller output;
-- known behavior if a new command saturates or becomes unrealizable.
+- bounded minimum and maximum pulse widths;
+- fault authority over controller output;
+- deterministic saturation behavior.
 
 Controllers never write raw HRTIM compare registers.
 
-## ADC Timing Relationship
+## ADC timing relationship
 
 At 200 kHz:
 
@@ -113,33 +105,22 @@ At 200 kHz:
 Tsw = 5 us
 ```
 
-ADC timing is part of the switching-cycle design. Sample placement must account for switching-edge settling, deterministic ripple phase, conversion order/latency, analog-filter delay, and the controller’s actuation deadline.
+ADC trigger timing is part of the switching-cycle definition. Sample phase accounts for switching-edge settling, ripple phase, conversion order/latency, analog-filter delay, and the actuation deadline.
 
-## Required Implementation-Delta Verification
+## Timing acceptance conditions
 
-Before applying significant bus power with project firmware, verify only what the project changes or depends on:
+The power-stage timing boundary is valid only when:
 
 1. PA8–PA11 remain inactive through reset and HRTIM ownership transfer.
-2. HRTIM output polarity matches the physical gate-driver inputs.
-3. Complementary pairs never overlap under commanded duty transitions.
+2. HRTIM polarity matches the physical gate-driver inputs.
+3. Complementary pairs do not overlap through duty transitions.
 4. Effective gate non-overlap is compatible with the power stage.
 5. Minimum/maximum pulse and bootstrap constraints are enforced by modulation.
-6. Fault/disable forcing produces the intended inactive gate state.
+6. Fault forcing produces the defined inactive gate state.
 7. ADC trigger phase is deterministic relative to PWM.
 
-This is **not** a standalone re-characterization campaign for vendor-proven Buck/Boost/Mixed waveforms.
+## Measurement safety
 
-## Measurement Safety
+High-side gate-source and switching-node measurements require differential or otherwise isolated instrumentation. Earth-referenced probe grounds are not connected to floating high-side nodes.
 
-High-side gate-source and switching-node measurements require differential or otherwise properly isolated instrumentation. Standard earth-referenced probe grounds must not be connected to floating high-side nodes.
-
-The vendor documentation also warns against online debugging while converter power is applied; pausing firmware can make PWM behavior unsafe.
-
-## Design Rules
-
-1. Effective timing is validated at the gate/power-stage boundary when required, not inferred from code alone.
-2. HRTIM configuration is separate from HRTIM enable authority.
-3. Duty and pulse constraints belong below controller code.
-4. ADC timing and PWM timing are designed together.
-5. Timing evidence records operating voltage/current, probe method, and firmware revision.
-6. Do not repeat broad vendor baseline tests unless a new implementation depends on them.
+Online SWD halt/debug is not used while the energized power stage depends on continuous firmware PWM execution.

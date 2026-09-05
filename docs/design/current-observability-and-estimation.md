@@ -2,13 +2,9 @@
 
 ## Purpose
 
-The CBB024D V1.2 board measures `Vin`, `Iin`, `Vout`, and `Iout`, but does not directly sample the main inductor current `iL`.
+The CBB024D V1.2 board measures `Vin`, `Iin`, `Vout`, and `Iout` but does not directly sample the main-inductor current `iL`.
 
-This document defines the project strategy for reconstructing `iL` accurately enough for cascaded current control and later LQI, Super-Twisting SMC, Deadbeat, and MPC without adding a current sensor.
-
-The hardware constraint is fixed:
-
-> **The final architecture uses only the existing board measurements and converter state. No additional inductor-current sensor or ADC channel is added.**
+The control architecture reconstructs `iL` from the existing measurements, converter model, realized duty commands, and switching timing. No permanent inductor-current sensor or additional ADC channel is part of the architecture.
 
 ## Available information
 
@@ -21,141 +17,17 @@ Vout
 Iout
 ```
 
-Known control/state information:
+Known actuation/timing:
 
 ```text
 d1
 d2
-PWM period
-switching / operating state
+e1 = d1
+e2 = 1 - d2
+PWM period / sample timing
 ```
 
-Required reconstructed state:
-
-```text
-iL_hat
-```
-
-All signs and duty definitions follow `control-conventions.md`.
-
-## Why terminal current is not inductor current
-
-The two 1 mΩ shunts measure port current. The port capacitors can source or absorb current, so neither terminal-current channel is an unconditional instantaneous measurement of `iL`.
-
-Using the project conventions, an ideal averaged three-state model is:
-
-```text
-Cin  dVin/dt  = Iin - d1 iL
-L    diL/dt   = d1 Vin - (1 - d2) Vout
-Cout dVout/dt = (1 - d2) iL - Iout
-```
-
-This is the canonical estimator backbone. Loss terms such as inductor DCR, MOSFET conduction loss, dead-time voltage error, and capacitor ESR are added only when measured data shows that they materially improve prediction.
-
-## Algebraic information from the port equations
-
-The capacitor equations imply:
-
-```text
-iL_from_A = (Iin - Cin dVin/dt) / d1
-
-iL_from_B = (Iout + Cout dVout/dt) / (1 - d2)
-```
-
-These are useful analysis relations and may be used as bounded pseudo-measurements or consistency checks, but they are not suitable as unconditional real-time formulas because:
-
-- differentiation amplifies voltage noise;
-- `Cin` and `Cout` are uncertain and voltage dependent;
-- `d1` or `1-d2` can become small;
-- ADC channels have nonzero sequence latency;
-- switching ripple depends on sample phase;
-- DCM and zero-current crossings violate simple CCM assumptions.
-
-The implementation must therefore avoid blind division by small duty terms and must track data quality.
-
-## Preferred estimator structure
-
-The preferred first estimator is a model predictor with measurement correction.
-
-State vector:
-
-```text
-x = [ Vin, iL, Vout ]^T
-```
-
-Measured model inputs:
-
-```text
-u = [ Iin, Iout, d1, d2 ]
-```
-
-Direct measured states available for residual correction:
-
-```text
-y = [ Vin, Vout ]^T
-```
-
-Continuous predictor:
-
-```text
-dVin/dt  = (Iin - d1 iL) / Cin
-
-diL/dt   = (d1 Vin - (1 - d2) Vout - Rl iL) / L
-
-dVout/dt = ((1 - d2) iL - Iout) / Cout
-```
-
-`Iin` and `Iout` are therefore measured inputs to the model, not direct `iL` samples. Measured `Vin` / `Vout` residuals correct the predicted states. Duty-conditioned algebraic current estimates may later provide additional correction information when their numerical conditioning and bandwidth are acceptable.
-
-## Discrete baseline predictor
-
-At sample period `Ts`, a first forward-Euler implementation is:
-
-```text
-Vin_hat[k+1] = Vin_hat[k]
-              + Ts/Cin * (Iin[k] - d1[k] iL_hat[k])
-
-iL_hat[k+1] = iL_hat[k]
-              + Ts/L * (d1[k] Vin_hat[k]
-                        - (1 - d2[k]) Vout_hat[k]
-                        - Rl iL_hat[k])
-
-Vout_hat[k+1] = Vout_hat[k]
-               + Ts/Cout * ((1 - d2[k]) iL_hat[k] - Iout[k])
-```
-
-The integration method may later be improved if the error is material relative to the control bandwidth.
-
-## Candidate correction methods
-
-Use the simplest method that meets error and phase requirements:
-
-```text
-complementary predictor-corrector
-Luenberger / linear time-varying observer
-Kalman filter
-extended Kalman filter
-```
-
-Do not start with EKF merely because it is available. Estimator complexity must be justified by measured improvement.
-
-## Observability and confidence
-
-The hidden inductor state influences both capacitor-voltage dynamics:
-
-```text
-dVin/dt  contains -d1 iL
-dVout/dt contains +(1 - d2) iL
-```
-
-Observability weakens when the corresponding coupling term approaches zero:
-
-```text
-d1 -> 0
-1 - d2 -> 0
-```
-
-The estimator interface should therefore expose at least:
+Estimator output:
 
 ```text
 iL_hat
@@ -164,107 +36,162 @@ valid
 flags
 ```
 
-Low-confidence conditions include startup before offset calibration, ADC saturation, poor duty conditioning, DCM/zero crossing outside the validated model, timing uncertainty, or measurement plausibility failure.
+All signs follow `control-conventions.md`.
+
+## Canonical estimator model
+
+The ideal averaged three-state model is:
+
+```text
+Cin  dVin/dt  = Iin - d1 iL
+L    diL/dt   = d1 Vin - (1 - d2) Vout
+Cout dVout/dt = (1 - d2) iL - Iout
+```
+
+State and measured-input definitions are:
+
+```text
+x = [ Vin, iL, Vout ]^T
+u = [ Iin, Iout, d1, d2 ]
+y = [ Vin, Vout ]^T
+```
+
+The fast inductor predictor uses the actuation actually realized by modulation:
+
+```text
+vL_realized = Vin e1 - Vout e2
+
+diL_hat/dt = (vL_realized - Rl iL_hat) / L
+```
+
+Using `vL_realized` keeps the estimator consistent with duty saturation and allocator constraints.
+
+## Predictor-correction structure
+
+```text
+realized e1/e2 + Vin/Vout
+          ↓
+physics predictor
+          ↓
+iL_pred
+          ↓
+conditioned measurement correction
+          ↓
+iL_hat + confidence
+```
+
+The predictor is the fast path. Terminal measurements provide lower-bandwidth correction and consistency information.
+
+## Why terminal current is not `iL`
+
+The 1 mΩ shunts measure port current. Port capacitors can source or absorb current, so neither terminal-current channel is an unconditional instantaneous measurement of the main-inductor current.
+
+The port equations imply:
+
+```text
+iL_from_A = (Iin - Cin dVin/dt) / d1
+
+iL_from_B = (Iout + Cout dVout/dt) / (1 - d2)
+```
+
+These relations are conditioned pseudo-measurements, not unconditional per-cycle formulas. Their validity is reduced by:
+
+- voltage differentiation noise;
+- uncertain effective `Cin` / `Cout`;
+- small `d1` or `1-d2` denominators;
+- ADC channel sequence skew;
+- switching-ripple sample phase;
+- DCM and zero-current behavior outside the CCM model.
+
+Pseudo-measurements are ignored or down-weighted when their conditioning is poor.
+
+## Discrete predictor
+
+For sample period `Ts`:
+
+```text
+Vin_hat[k+1] = Vin_hat[k]
+              + Ts/Cin * (Iin[k] - d1[k] iL_hat[k])
+
+iL_hat[k+1] = iL_hat[k]
+              + Ts/L * (vL_realized[k] - Rl iL_hat[k])
+
+Vout_hat[k+1] = Vout_hat[k]
+               + Ts/Cout * ((1 - d2[k]) iL_hat[k] - Iout[k])
+```
+
+The estimator consumes the same timestamped measurement set and realized duty state used by the control cycle.
+
+## Observability and confidence
+
+The hidden current state couples into the capacitor dynamics through:
+
+```text
+dVin/dt  contains -d1 iL
+dVout/dt contains +(1 - d2) iL
+```
+
+Correction observability weakens as:
+
+```text
+d1 -> 0
+1 - d2 -> 0
+```
+
+`confidence`, `valid`, and `flags` therefore reflect at least:
+
+- ADC validity and saturation;
+- current-offset/calibration validity;
+- measurement timestamp validity;
+- duty conditioning;
+- model-envelope validity;
+- residual plausibility;
+- DCM/zero-crossing conditions outside the accepted CCM envelope.
+
+A controller that requires `iL_hat` does not use the estimate while `valid == false`.
 
 ## Nominal plant parameters
 
-Initial schematic-derived values:
-
 ```text
 L    = 22 uH nominal, ±20%
-Cin  ≈ 460 uF nominal including 2 x 220 uF + 2 x 10 uF
-Cout ≈ 460 uF nominal including 2 x 220 uF + 2 x 10 uF
+Cin  ≈ 460 uF nominal per Port A network
+Cout ≈ 460 uF nominal per Port B network
 fsw  = 200 kHz
 Ts   = 5 us for one update per switching cycle
 ```
 
-These are starting parameters, not identified truth. Ceramic DC-bias derating, electrolytic tolerance, ESR, and effective source/load impedance can materially alter the useful model.
+Nominal values are model inputs, not calibrated truth. Effective capacitance, ESR, inductor DCR, inductance, source impedance, and load impedance remain explicit parameter uncertainties.
 
-## Vendor evidence retained because it matters
+## Measurement requirements
 
-Only vendor evidence relevant to the new estimator architecture is carried forward:
-
-- ADC1 samples `Vin`, `Iin`, `Vout`, and `Iout` with DMA;
-- the ADC trigger is tied to HRTIM timing;
-- vendor code places the sample away from switching edges;
-- vendor firmware performs zero-current offset averaging;
-- forward reference code clips negative current while reverse reference code changes interpretation.
-
-The project keeps the useful timing and offset-calibration concepts while rejecting direction-dependent channel remapping and negative-current clipping.
-
-## Measurement prerequisites
-
-Before an `iL_hat`-dependent controller is energized, establish:
-
-1. current-channel zero offsets;
-2. current polarity under the fixed Port A / Port B convention;
-3. exact ADC conversion order and latency;
-4. PWM phase of every ADC sample;
-5. noise with PWM inactive and active;
-6. whether per-cycle samples are useful directly or require filtering/decimation;
-7. effective `L`, `Cin`, and `Cout` only to the accuracy required by the estimator;
-8. estimator delay, residuals, and failure modes.
-
-These are estimator-enabling measurements, not a repetition of vendor power-stage qualification.
-
-## Development-only validation instrumentation
-
-An external current probe may be used during development to score `iL_hat` error, phase delay, and transient behavior. Such a probe is validation instrumentation only and is **not** part of the final control architecture or sensing requirements.
-
-## Controller gating
-
-| Controller | Estimator requirement |
-| --- | --- |
-| Voltage-loop PI | Does not require `iL_hat` |
-| Cascaded V/I PI | Bounded delay/error over intended bandwidth |
-| LQI | Observer quality must support chosen state model |
-| ST-SMC | Bounded signed-current error and noise |
-| Deadbeat | High per-cycle accuracy and low latency |
-| MPC | State quality characterized over the optimization envelope |
-
-Deadbeat and MPC therefore follow, rather than precede, estimator validation.
-
-## Efficient development sequence
+The estimator consumes calibrated signed measurements with defined:
 
 ```text
-PWM-synchronized signed ADC acquisition
-        ↓
-offset / gain calibration
-        ↓
-timestamp and PWM-phase verification
-        ↓
-log Vin / Iin / Vout / Iout / d1 / d2
-        ↓
-offline estimator development
-        ↓
-quantify error / delay / confidence behavior
-        ↓
-port estimator to firmware
-        ↓
-cascaded PI or LQI
+channel polarity
+scale / offset
+PWM trigger phase
+ADC conversion order
+conversion latency
+DMA handoff point
+measurement timestamp
 ```
 
-## Estimator gate
+Unknown timing or polarity invalidates estimator confidence.
 
-The estimator is accepted only when its intended operating envelope demonstrates:
+## Validation instrumentation
+
+An external Hall/current probe may be connected at the board's inductor-current measurement access point as an independent validation reference. It is not part of the runtime sensing architecture.
+
+## Acceptance conditions
+
+Within a stated operating envelope, `iL_hat` is usable only when it demonstrates:
 
 ```text
-bounded estimation error
-acceptable phase delay for target current-loop bandwidth
 correct sign in both power directions
-stable behavior through Buck/Mixed/Boost transitions
-explicit low-confidence detection outside the validated envelope
+bounded estimation error
+bounded phase delay
+stable behavior across the defined CCM duty envelope
+explicit invalid/low-confidence behavior outside that envelope
 ```
 
-Numeric thresholds are derived from controller and protection requirements after the acquisition path is measured; they are not arbitrary constants in this document.
-
-## Do not
-
-- add a final-architecture `iL` sensor;
-- treat `Iin` or `Iout` as instantaneous `iL`;
-- divide blindly by small duty terms;
-- differentiate voltage without bandwidth control;
-- clip negative current;
-- hide unknown sensor scaling inside an observer;
-- enable estimator-dependent advanced control before acquisition timing and calibration are credible;
-- spend time re-proving vendor-validated basic converter operation.
+Numeric limits are controller-specific configuration and validation data; they are not embedded as undocumented constants in the estimator architecture.

@@ -2,31 +2,28 @@
 
 ## Purpose
 
-This document defines the high-level architecture and ownership boundaries of the bidirectional buck-boost control platform. Detailed signs, hardware facts, state-machine enums, modulation rules, and wire formats are owned by their dedicated design documents listed in `docs/design/README.md`.
+This document defines the high-level architecture and ownership boundaries of the bidirectional buck-boost control system.
 
-The architecture follows two principles:
+The existing CBB024D V1.2 power hardware is the physical plant. The project-owned system is the sensing, estimation, control, modulation, protection, firmware, and host architecture around that plant.
 
-> **The physical converter is the source of truth.**
+## System boundary
 
-> **Validate the implementation delta, not the vendor-proven baseline.**
-
-## System Boundary
-
-The controlled system includes more than the ideal four-switch stage. The effective plant and implementation boundary include:
+The controlled system includes:
 
 - two synchronous half bridges and the main inductor;
-- port capacitances and source/load interaction;
-- MOSFET/gate-driver timing and loss;
+- port capacitance and source/load interaction;
+- MOSFET/gate-driver timing;
 - voltage/current sensing and analog filtering;
 - ADC sample timing and conversion latency;
 - HRTIM actuation timing and dead time;
-- operating-region allocation;
+- state estimation;
+- controller state and references;
+- constrained duty allocation;
 - Power Manager startup/shutdown behavior;
-- protection and fault forcing.
+- protection and fault forcing;
+- supervisory telemetry/protocol interfaces.
 
-## Canonical Physical Mapping
-
-The V1.2 hardware mapping is:
+## Physical mapping
 
 ```text
 Port A / left                         Port B / right
@@ -40,93 +37,104 @@ Port A / left                         Port B / right
         GND----------------------------------GND
 ```
 
-All project-owned firmware and documentation use this mapping. `hardware-specification.md` owns the full board facts.
+`hardware-specification.md` owns board facts; `control-conventions.md` owns signs and duties.
 
-## Canonical Control Path
+## Canonical control path
 
 ```text
 Physical Power Stage
         ↓
-ADC / Signal Conditioning
+PWM-synchronized ADC / signal conditioning
         ↓
-Calibration / Scaling
+Calibration / scaling
         ↓
 Vin / Iin / Vout / Iout
         ↓
-State Estimation
+State estimator
         ↓
-iL_hat + estimator health
+iL_hat + estimator validity
         ↓
-Outer Voltage / Energy Controller
+Outer voltage / energy control
         ↓
 iL_ref
         ↓
-Inner Current Controller
+Inner current control
         ↓
 vL*
         ↓
-Unified Control Allocation / Modulation
+Continuous constrained allocator
+        ↓
+e1 / e2
         ↓
 d1 / d2
         ↓
-HRTIM / Gate Drive
+HRTIM / gate drive
         ↓
 Physical Power Stage
 ```
 
-The key averaged actuation relation is:
+The common actuation equation is:
 
 ```text
 L diL/dt = d1 Vin - (1 - d2) Vout
+         = Vin e1 - Vout e2
 ```
 
-The controller is therefore organized around desired average inductor voltage `vL*`; Buck/Mixed/Boost realization belongs to modulation.
+## Measurement and estimation boundary
 
-## Measurement and Estimation Boundary
-
-The board measures `Vin`, `Iin`, `Vout`, and `Iout`, but not `iL` directly. The target architecture does not add an inductor-current sensor.
+The board directly measures:
 
 ```text
-PWM-synchronized ADC/DMA
-        ↓
-calibrated signed measurements
-        ↓
-model predictor + residual correction
-        ↓
-iL_hat / confidence
+Vin
+Iin
+Vout
+Iout
 ```
 
-`Iin` and `Iout` are terminal currents, not unconditional instantaneous `iL` measurements.
+Main-inductor current is reconstructed:
 
-## Controller Boundary
+```text
+realized actuation + calibrated measurements
+                    ↓
+            model predictor
+                    ↓
+       measurement correction
+                    ↓
+          iL_hat + validity
+```
 
-Controllers consume logical physical quantities and produce a logical actuation objective. They do not:
+`Iin` and `Iout` are terminal currents, not instantaneous `iL` substitutes.
+
+## Controller boundary
+
+Controllers consume calibrated logical quantities and produce physical actuation objectives. They do not:
 
 - write HRTIM registers;
-- decide GPIO alternate-function ownership;
-- bypass minimum-pulse/dead-time/bootstrap limits;
-- enable the power stage;
+- own GPIO alternate-function handoff;
+- bypass duty/dead-time/bootstrap constraints;
+- authorize switching;
 - override protection.
 
-The independent baseline is cascaded voltage/current PI. Advanced comparison targets are LQI, Deadbeat Predictive Current Control, Super-Twisting SMC, and constrained/reduced MPC.
+The controller-to-modulation interface is `vL*`.
 
-## Modulation Boundary
+## Modulation boundary
 
 The modulation layer owns:
 
-- conversion of `vL*` into realizable `d1` / `d2`;
-- Buck/Mixed/Boost region policy;
-- duty and pulse-width limits;
+- feasibility clamp for `vL*`;
+- continuous `e1/e2` allocation;
+- conversion to `d1/d2`;
+- duty/minimum-pulse/off-time limits;
 - bootstrap refresh;
-- bounded/bumpless region transitions;
-- hardware-realizable complementary switching requests;
-- saturation feedback needed by anti-windup.
+- complementary-output legality;
+- saturation metadata;
+- realized actuation `vL_realized`.
 
-The vendor 0.8/1.2 region boundaries and mixed-mode strategy are reference evidence, not permanent architectural constraints.
+Buck-like, Mixed-like, and Boost-like labels describe the resulting operating point; they are not controller states.
 
-## Power Manager Boundary
+## Power Manager boundary
 
-The Power Manager is the authority for whether switching is allowed. Canonical externally visible states are defined in `protection-and-state-machine.md`:
+The Power Manager owns switching authority:
 
 ```text
 OFF
@@ -142,87 +150,54 @@ SHUTDOWN
 OFF
 ```
 
-Fault paths may enter `FAULT` and, when policy allows, `RETRY_WAIT` before re-qualification.
+Fault paths use `FAULT` and, where policy permits, `RETRY_WAIT`.
 
-Boot/reset is an internal initialization condition, not a reason to expose an unsafe partially initialized converter state.
+Host commands and controller outputs are requests subordinate to this state machine.
 
-## Protection Boundary
-
-Protection is layered and independent of the selected controller:
+## Protection boundary
 
 ```text
-hardware-immediate / HRTIM output suppression
+hardware-immediate / HRTIM suppression
         ↓
 modulation hard limits
         ↓
-Power Manager qualification and state policy
+Power Manager qualification/state policy
         ↓
 controller constraints
 ```
 
-A controller experiment is never allowed to become the sole mechanism preventing hardware damage.
+Protection behavior is independent of controller family.
 
-## Bidirectional Operation
-
-Port identities never swap:
+## Bidirectional operation
 
 ```text
 Port A = left / schematic VIN side
 Port B = right / schematic VOUT side
 ```
 
-Direction changes are represented by signed current/power, references, estimator state, Power Manager policy, and modulation. The same ADC channels, physical switch mapping, and control abstraction remain valid in both directions.
+Port identity, ADC channels, switch mapping, and firmware ownership do not change with power-flow direction. Direction is represented by signed current/power, references, estimator state, and Power Manager policy.
 
-The target is one firmware image for A→B and B→A energy transfer.
-
-## Host and Instrumentation Boundary
-
-Host software is supervisory:
+## Host boundary
 
 ```text
-CLI or Browser
+Host client
       ↓
-Device / Protocol API
+COBS + CRC16 protocol
       ↓
-COBS + CRC16
+USART1
       ↓
-USB-UART / USART1
-      ↓
-Power Manager / Telemetry
+Power Manager / telemetry
 ```
 
-The Windows-side CLI is appropriate for first physical UART validation. Web Serial is the later experiment-platform client. Neither is part of the 200 kHz real-time loop.
+The host is supervisory. It is not a switching-cycle scheduler, measurement clock, or direct PWM endpoint.
 
-High-rate transient capture is MCU-timestamped and buffered locally; browser timing is never used as measurement timing.
+## Architecture invariants
 
-## Model-to-Hardware Loop
-
-Model work exists only to support the new estimator/control/modulation questions:
-
-```text
-select operating condition
-        ↓
-model / predict
-        ↓
-simulate or calculate
-        ↓
-measure only required implementation delta
-        ↓
-compare quantitative metrics
-        ↓
-update model / assumptions
-```
-
-The project does not perform broad characterization merely to duplicate vendor evidence.
-
-## Design Intent, Implementation, Evidence
-
-Every significant subsystem should keep these separate:
-
-```text
-design intent    what must happen
-implementation   how firmware/hardware does it
-evidence         measurements/tests proving the delta
-```
-
-This separation is the basis for repeatable controller comparison and safe iteration.
+1. Physical mapping is fixed by the V1.2 schematic.
+2. Signed physical conventions are direction-independent.
+3. The controller requests `vL*`; modulation realizes constrained duties.
+4. The estimator consumes realized actuation rather than unconstrained requests.
+5. Power Manager owns switching authority.
+6. Protection is controller-independent.
+7. Host timing is outside the real-time control loop.
+8. All hard real-time peripheral ownership remains local to STM32F334 firmware.

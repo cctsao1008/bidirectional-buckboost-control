@@ -2,13 +2,9 @@
 
 ## Purpose
 
-This document defines the project-owned control model of the CBB024D V1.2 four-switch power stage. `hardware-specification.md` owns detailed board facts; this file focuses on the physical topology and equations required by control, estimation, and modulation.
+This document defines the control model of the CBB024D V1.2 four-switch power stage. Detailed board facts belong to `hardware-specification.md`.
 
-The board is already vendor-proven to operate. Model validation is performed only when required by a new estimator, controller, modulation strategy, or protection function.
-
-## Physical Topology
-
-The converter is a four-switch non-isolated synchronous bidirectional buck-boost stage with two half bridges connected through one inductor:
+## Physical topology
 
 ```text
 Port A / left                         Port B / right
@@ -22,44 +18,38 @@ Port A / left                         Port B / right
         GND----------------------------------GND
 ```
 
-**Canonical V1.2 half-bridge mapping:**
-
 | Bridge | High-side | Low-side | PWM signals |
 | --- | --- | --- | --- |
 | Left / Port A | Q1 | Q4 | `PWM1H`, `PWM1L` |
 | Right / Port B | Q2 | Q3 | `PWM2H`, `PWM2L` |
 
-This correct mapping must be used everywhere. Older conceptual vendor diagrams that imply Q1/Q2 and Q4/Q3 pairings do not represent the physical V1.2 half bridges.
-
-## Nominal Parameters
+## Nominal parameters
 
 | Parameter | Value |
 | --- | --- |
-| Input range | 12–48 VDC |
-| Output range | 5–48 VDC |
+| Port-A voltage range | 12–48 VDC published input range |
+| Port-B voltage range | 5–48 VDC published output range |
 | Rated operating point | 24 V / 5 A |
 | Suggested maximum power | 200 W |
 | Switching frequency | 200 kHz |
-| Main inductor | 22 µH nominal, ±20 % |
-| Inductor DCR | about 20.5 mΩ typ reference value |
-| Bulk capacitance | 2 × 220 µF per port, plus local ceramics |
+| Main inductor | 22 µH nominal, ±20% |
+| Inductor DCR | approximately 20.5 mΩ typical reference |
+| Nominal port capacitance | approximately 460 µF including local 10 µF capacitors |
 | Terminal-current shunts | 1 mΩ |
 | MOSFET | BSC070N10NS3G |
 | Gate driver | Si8233BD-D-IS |
 
-Nominal values are starting parameters, not identified truth.
+Nominal values are model parameters, not calibrated truth.
 
-## Canonical Averaged Model
-
-All signs and duty variables follow `control-conventions.md`:
+## Canonical averaged model
 
 ```text
-d1 = average on-time fraction of Q1, left high-side
-d2 = average on-time fraction of Q3, right low-side
+d1 = Q1 left high-side average duty
+d2 = Q3 right low-side average duty
 iL > 0 from Port A to Port B
 ```
 
-Ideal averaged equations:
+Ideal CCM equations:
 
 ```text
 Cin  dVin/dt  = Iin - d1 iL
@@ -67,101 +57,97 @@ L    diL/dt   = d1 Vin - (1 - d2) Vout
 Cout dVout/dt = (1 - d2) iL - Iout
 ```
 
-The central actuation equation is:
+With effective duties:
 
 ```text
-vL = d1 Vin - (1 - d2) Vout
+e1 = d1
+e2 = 1 - d2
+```
+
+```text
+L diL/dt = Vin e1 - Vout e2
+```
+
+The central actuation coordinate is:
+
+```text
+vL = Vin e1 - Vout e2
 ```
 
 At ideal steady state:
 
 ```text
 Vout / Vin = d1 / (1 - d2)
+           = e1 / e2
 ```
 
-This equation is the common control-allocation backbone for Buck, Mixed, Boost, and reverse power flow.
+## Operating-point descriptions
 
-## Forward Buck-Like Operation
+### Buck-like
 
-When Port B voltage is sufficiently below Port A voltage, an efficient allocation typically modulates the left bridge while the right bridge remains near a pass-through state compatible with synchronous conduction and bootstrap constraints.
+When Port B voltage is below Port A voltage, an efficient allocation lies near a right-leg pass-through boundary and primarily varies the left bridge.
 
-Ideal relation:
+Ideal limiting relation:
 
 ```text
 Vout / Vin ≈ d1
 ```
 
-The exact gate state is owned by the modulation layer, not by this plant model.
+### Boost-like
 
-## Forward Boost-Like Operation
+When Port B voltage is above Port A voltage, an efficient allocation lies near a left-leg pass-through boundary and primarily varies the right bridge.
 
-When Port B voltage is sufficiently above Port A voltage, an efficient allocation typically modulates the right bridge while the left bridge remains near the corresponding pass-through state.
-
-Ideal relation under the project duty convention:
+Ideal limiting relation:
 
 ```text
 Vout / Vin ≈ 1 / (1 - d2)
 ```
 
-## Mixed Operation
+### Mixed-like
 
-When both bridges participate:
+When both bridges participate materially:
 
 ```text
 Vout / Vin = d1 / (1 - d2)
 ```
 
-Vendor reference firmware uses a known-good mixed-mode allocation near `d1 ≈ 0.8` while varying the other leg. This is reference evidence only; the project’s unified allocator is free to choose a different realizable pair.
+The control architecture does not require these descriptions to become separate controller states.
 
-## Bidirectional Operation
+## Bidirectional semantics
 
-The physical stage supports current in either direction. Port identities never swap:
+Port identities remain fixed:
 
 ```text
 Port A = left physical terminal
 Port B = right physical terminal
 ```
 
-Reverse operation is represented by signed current/power and signed controller objectives, not by redefining the bridge mapping.
+Reverse energy flow is represented by signed current/power and controller references. The physical bridge mapping does not change.
 
-## Energy Storage and Loss Terms
+## Non-ideal model terms
 
-The model hierarchy may add the following only when they materially improve prediction for the problem being studied:
+The control model includes a non-ideal term only when its parameter and effect are explicitly represented. Relevant terms include:
 
-- inductor DCR and saturation-dependent inductance;
+- inductor DCR and inductance variation;
 - capacitor ESR/effective capacitance;
-- MOSFET `RDS(on)` and temperature dependence;
+- MOSFET conduction loss;
 - dead-time voltage error;
 - switching loss;
 - source/load impedance;
-- sensing delay and filter dynamics.
+- sensing and actuation delay.
 
-A more complicated model is not automatically better; each added term must have traceable parameters and a measurable purpose.
+`modeling-strategy.md` owns the model-layer and parameter-validity rules.
 
-## Dead Time and Commutation
+## Timing boundary
 
-Effective commutation is determined by HRTIM timing, Si8233 behavior, propagation mismatch, gate resistance, MOSFET charge, diode/body-diode conduction, parasitics, and operating point. `gate-drive-and-timing.md` owns the timing requirements.
+Effective commutation depends on HRTIM timing, Si8233 propagation, gate resistance, MOSFET charge, dead time, and operating point. `gate-drive-and-timing.md` owns these constraints.
 
-## Model Hierarchy
+## Sensing boundary
 
-The project may use:
+The board directly measures port voltage/current only:
 
-1. switching model for commutation/ripple questions;
-2. averaged large-signal model for estimator and nonlinear control;
-3. operating-point small-signal model for local loop analysis;
-4. discrete-time state-space model for digital control;
-5. uncertainty/identified corrections when data justifies them.
+```text
+Vin / Iin / Vout / Iout
+```
 
-## Validation Boundary
-
-Do not perform a broad campaign to prove that the vendor power stage can Buck, Boost, or operate bidirectionally; that capability is already established.
-
-Measure only what a new implementation needs, for example:
-
-- actual acquisition/actuation timing;
-- model parameters that materially affect `iL_hat`;
-- new modulation transition behavior;
-- effective constraints needed for safe HRTIM operation;
-- controller-specific transient metrics.
-
-Any development-only external inductor-current probe is validation instrumentation, not part of the final sensing architecture.
+Main-inductor current is reconstructed as `iL_hat`; external `iL` instrumentation is validation-only.

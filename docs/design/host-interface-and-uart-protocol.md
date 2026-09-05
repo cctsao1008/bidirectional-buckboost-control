@@ -2,42 +2,38 @@
 
 ## Purpose
 
-This document defines the host-to-converter communication boundary. The host is supervisory; it is never part of the switching-cycle control loop.
+This document defines the host-to-converter communication boundary. The host is supervisory and is never part of switching-cycle timing or raw PWM authority.
 
-The protocol is designed to support both a simple bring-up CLI and the later Web Serial experiment application.
-
-## Physical Interface
+## Physical interface
 
 | Parameter | Value |
 | --- | --- |
 | Interface | USART1 |
 | Pins | PB6 TX / PB7 RX |
-| Initial baud | 115200 bit/s |
+| Baud | 115200 bit/s |
 | Format | 8N1 |
 | Flow control | none |
 | Duplex | full |
 
-Higher baud rates may be introduced only after transport and signal-integrity validation.
-
 ## Layering
 
 ```text
-CLI / Web UI
+Host client
     ↓
-Device API / Protocol Codec
+Device API / protocol codec
     ↓
-Serial transport
+serial transport
     ↓
 USART1
     ↓
-Firmware protocol parser
+firmware protocol parser
     ↓
-Power Manager / Telemetry provider
+Power Manager / telemetry provider
 ```
 
-The host never directly writes gate states, HRTIM compare values, or switching-cycle duties.
+The host cannot directly write gate states, HRTIM compare registers, or switching-cycle duty commands.
 
-## Wire Framing
+## Wire framing
 
 Protocol major version 1 uses:
 
@@ -58,7 +54,7 @@ Raw layout:
 +---------+------+-----+-------+------+--------+---------+-------+
 ```
 
-All multi-byte integers are little-endian. Maximum payload for version 1 is 240 bytes.
+All multi-byte integers are little-endian. Maximum version-1 payload is 240 bytes.
 
 ## CRC
 
@@ -75,18 +71,18 @@ Check      : 0x29B1 for "123456789"
 
 CRC covers `VERSION` through the final payload byte before COBS encoding.
 
-## Message Types
+## Message types
 
 | Value | Name | Direction |
 | ---: | --- | --- |
 | `0x01` | `REQUEST` | host -> MCU |
 | `0x02` | `RESPONSE` | MCU -> host |
-| `0x03` | `EVENT` | MCU -> host, reserved |
-| `0x04` | `TELEMETRY` | MCU -> host, reserved |
+| `0x03` | `EVENT` | MCU -> host |
+| `0x04` | `TELEMETRY` | MCU -> host |
 
 Every response payload begins with one status byte.
 
-## Response Status
+## Response status
 
 | Value | Name |
 | ---: | --- |
@@ -99,24 +95,20 @@ Every response payload begins with one status byte.
 | `0x06` | `ERR_BUSY` |
 | `0x07` | `ERR_INTERNAL` |
 
-## Command Namespace
+## Command namespace
 
-The protocol header reserves these command IDs:
-
-| ID | Command | Intended purpose |
+| ID | Command | Semantics |
 | ---: | --- | --- |
 | `0x01` | `PING` | link/parser check |
 | `0x02` | `GET_INFO` | protocol/firmware identity |
 | `0x03` | `GET_STATUS` | state and primary measurements |
-| `0x10` | `SET_VREF` | future regulated-voltage reference request |
-| `0x11` | `SET_ILIMIT` | future current-limit/reference ceiling request |
-| `0x12` | `OUTPUT_ENABLE` | future Power Manager startup request |
-| `0x13` | `OUTPUT_DISABLE` | future controlled-shutdown request |
-| `0x14` | `CLEAR_FAULT` | future recoverable-fault clear request |
+| `0x10` | `SET_VREF` | reserved voltage-reference request |
+| `0x11` | `SET_ILIMIT` | reserved current-limit request |
+| `0x12` | `OUTPUT_ENABLE` | reserved Power Manager enable request |
+| `0x13` | `OUTPUT_DISABLE` | reserved controlled-shutdown request |
+| `0x14` | `CLEAR_FAULT` | reserved recoverable-fault clear request |
 
-### Currently implemented subset
-
-The current firmware intentionally implements only:
+Implemented command handlers are:
 
 ```text
 PING
@@ -124,9 +116,7 @@ GET_INFO
 GET_STATUS
 ```
 
-All other reserved commands return `ERR_BAD_CMD` until the corresponding Power Manager/reference functionality exists. Reserving an ID does **not** mean that the feature is implemented or safe to use.
-
-This distinction prevents documentation from implying power-control capability before the firmware actually has it.
+Reserved command IDs are protocol definitions, not raw control authority. An unsupported reserved command returns `ERR_BAD_CMD`.
 
 ## `PING` — `0x01`
 
@@ -154,13 +144,11 @@ uint8_t  capability_bits
 uint32_t build_id
 ```
 
-`build_id` is implementation-defined until a stronger firmware provenance scheme is frozen.
-
 ## `GET_STATUS` — `0x03`
 
 Request payload: empty.
 
-Current response after status:
+Response after status:
 
 ```text
 uint32_t uptime_ms
@@ -179,13 +167,9 @@ uint16_t duty_a_q15
 uint16_t duty_b_q15
 ```
 
-Current is signed to preserve bidirectional semantics. `vin_mV` / `vout_mV` retain board-signal naming; UI may display Port A / Port B where direction-neutral terminology is clearer.
+Current fields are signed according to `control-conventions.md`.
 
-The present firmware returns a safe inactive state and zero measurement fields until acquisition is integrated.
-
-## Canonical Power-State Values
-
-Power-state semantics are owned by `protection-and-state-machine.md` and mirrored on the wire:
+## Power-state values
 
 | Value | State |
 | ---: | --- |
@@ -197,9 +181,9 @@ Power-state semantics are owned by `protection-and-state-machine.md` and mirrore
 | `5` | `FAULT` |
 | `6` | `RETRY_WAIT` |
 
-Boot/reset is not a stable externally visible power state.
+`protection-and-state-machine.md` owns state semantics.
 
-## Operating-Region Values
+## Operating-region values
 
 | Value | Region |
 | ---: | --- |
@@ -208,11 +192,9 @@ Boot/reset is not a stable externally visible power state.
 | `2` | `MIXED` |
 | `3` | `BOOST` |
 
-Region describes modulation behavior, not power-flow direction.
+Region is a modulation description, not power-flow direction.
 
-## Controller-Type Values
-
-Reserved identifiers:
+## Controller-type values
 
 | Value | Controller |
 | ---: | --- |
@@ -223,50 +205,33 @@ Reserved identifiers:
 | `4` | `SUPER_TWISTING_SMC` |
 | `5` | `MPC` |
 
-These are namespace reservations, not implementation claims.
+These values define the wire namespace and do not imply that every controller is present in a given firmware build. Capability bits and firmware identity determine supported functions.
 
-## Future Bidirectional Reference Semantics
+## Write-command safety semantics
 
-The existing names `SET_VREF`, `vin_mV`, and `vout_mV` reflect board/history naming. Before enabling bidirectional reference-setting commands, the firmware must freeze a direction-neutral request model that identifies at least:
-
-```text
-regulated physical port / objective
-requested power-flow direction
-voltage/current/power reference as applicable
-limits
-```
-
-A reverse-power request must **not** be implemented by swapping ADC channels or silently redefining `Vin` and `Vout`.
-
-If the existing `SET_VREF` ID is used, its semantics must be defined relative to an explicit active regulation target/capability, not permanently interpreted as “always regulate physical Port B.” A version/capability extension is preferred over ambiguous semantics.
-
-## Future Write-Command Safety
-
-When implemented:
+Any accepted write command follows this ownership chain:
 
 ```text
 wire request
     ↓
-frame/CRC validation
+frame / CRC validation
     ↓
-value/range validation
+value / range validation
     ↓
-shadow request/config
+Power Manager or configuration request
     ↓
-Power Manager qualification
-    ↓
-atomic safe-point commit
-    ↓
-controller/reference layer
+validated safe-point commit
 ```
 
-`OUTPUT_ENABLE` must request `OFF -> QUALIFY`; it never directly enables HRTIM outputs. `OUTPUT_DISABLE` requests `SHUTDOWN`. `CLEAR_FAULT` requests policy evaluation and cannot bypass a latched fault.
+`OUTPUT_ENABLE` maps to an enable request entering `QUALIFY`; it does not assert HRTIM enable directly. `OUTPUT_DISABLE` maps to `SHUTDOWN`. `CLEAR_FAULT` invokes fault-policy evaluation and cannot bypass a latched condition.
 
-## Sequence Handling
+Direction changes never swap ADC channels or silently redefine `Vin`/`Vout`.
 
-Host increments `SEQ`; the MCU copies the sequence into the matching response. Version 1 assumes at most one outstanding request from the simple client.
+## Sequence handling
 
-## Receive Path
+The host increments `SEQ`; the MCU copies the sequence into the matching response. Version 1 supports one outstanding request per simple client session.
+
+## Receive path
 
 ```text
 USART RX IRQ
@@ -286,78 +251,15 @@ CRC16 check
 dispatch
 ```
 
-The parser must discard malformed frames without changing converter state and resynchronize at the next delimiter.
+Malformed frames are discarded without changing converter state. The parser resynchronizes at the next delimiter.
 
-Recommended counters:
+## Host client
 
-```text
-rx_bytes
-tx_bytes
-valid_frames
-cobs_errors
-crc_errors
-length_errors
-version_errors
-rx_overflows
-unknown_commands
-```
+`tools/host_cli.py` implements the host-side serial client for the protocol foundation and the implemented read-only command set.
 
-## Bring-Up Client Strategy
+## Transport invariants
 
-Physical UART/protocol bring-up should use the Windows-side `tools/host_cli.py` first because it isolates serial/protocol behavior from browser/Web Serial complexity:
-
-```text
-PING
-GET_INFO
-GET_STATUS
-```
-
-Once this transport is stable on hardware, the Web Serial client can reuse the same wire protocol.
-
-## Web Client Architecture
-
-Later:
-
-```text
-User Connect
-    ↓
-Web Serial open
-    ↓
-PING
-    ↓
-GET_INFO / capabilities
-    ↓
-GET_STATUS
-    ↓
-Dashboard / experiment services
-```
-
-Normal dashboard telemetry may begin as 10–20 Hz polling. High-rate transients must use MCU-timestamped local capture and chunked transfer rather than browser timing.
-
-## Planned Extensions
-
-- capability discovery;
-- direction/regulated-port metadata;
-- telemetry streaming;
-- atomic controller/config updates;
-- programmable sequences;
-- local deterministic profile execution;
-- timestamped waveform capture;
-- calibration read/write;
-- fault-history retrieval;
-- remote-armed heartbeat policy;
-- firmware provenance/update handoff.
-
-## Transport Acceptance
-
-The host-transport foundation is accepted when:
-
-1. repeated connect/disconnect preserves parser operation;
-2. `PING` responds with valid sequence/CRC framing;
-3. `GET_INFO` reports valid protocol/firmware identity;
-4. `GET_STATUS` returns a correctly decoded inactive state before measurement integration;
-5. malformed COBS/CRC frames are rejected without side effects;
-6. stream resynchronization works after garbage/overflow;
-7. communication failure cannot alter local protection or PWM authority.
-
-Power-control command acceptance is a later Power Manager milestone, not part of the transport gate.
+1. Communication loss cannot remove local protection or PWM shutdown authority.
+2. Malformed COBS, length, version, or CRC data has no converter-state side effect.
+3. Host requests never bypass Power Manager qualification.
+4. High-rate measurement timing is MCU-defined; serial-host timing is not a control or capture clock.

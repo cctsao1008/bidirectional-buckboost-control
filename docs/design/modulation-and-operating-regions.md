@@ -2,212 +2,184 @@
 
 ## Purpose
 
-This document defines the control-allocation and operating-region abstraction between controller output and physical HRTIM waveforms.
+This document defines the control-allocation boundary between controller output `vL*` and physical four-switch duty commands.
 
-The project does **not** begin by reproducing the vendor mode scheduler. Vendor Buck/Mixed/Boost behavior is reference evidence. The project baseline is a unified actuation interface based on desired average inductor voltage.
+Buck-like, Mixed-like, and Boost-like labels describe operating points and switching allocation. They are not separate controller identities.
 
-All physical mapping and sign definitions follow `control-conventions.md`.
-
-## Physical Power-Stage Mapping
+## Physical mapping and duties
 
 ```text
 left bridge  : Q1 high / Q4 low
 right bridge : Q2 high / Q3 low
+
+d1 = Q1 left high-side average duty
+d2 = Q3 right low-side average duty
 ```
 
-Canonical duty variables:
-
-```text
-d1 = average on-time fraction of Q1, left high-side
-d2 = average on-time fraction of Q3, right low-side
-```
-
-Ideal averaged inductor equation:
+The ideal averaged inductor voltage is:
 
 ```text
 vL = d1 Vin - (1 - d2) Vout
 ```
 
-## Primary Modulation Interface
+## Effective-duty coordinates
 
-Controllers should request:
+```text
+e1 = d1
+e2 = 1 - d2
+```
+
+so:
+
+```text
+vL = Vin e1 - Vout e2
+```
+
+Vector form:
+
+```text
+a = [ Vin, -Vout ]^T
+e = [ e1,  e2   ]^T
+
+a^T e = vL
+```
+
+The controller requests:
 
 ```text
 vL*
 ```
 
-not raw timer compare values and not a mode-specific duty variable.
+and does not select a Buck/Mixed/Boost controller mode or raw HRTIM compare value.
 
-The modulation layer solves:
+## Feasible set
+
+Hardware constraints define a box:
 
 ```text
-d1 Vin - (1 - d2) Vout ≈ vL*
+e1_min <= e1 <= e1_max
+e2_min <= e2 <= e2_max
 ```
 
-subject to hardware and operating-policy constraints.
-
-Conceptually:
+For positive `Vin` and `Vout`, the realizable average-inductor-voltage interval is:
 
 ```text
-Controller
-   ↓
-vL*
-   ↓
-Control Allocation
-   ↓
-Operating-region / constraint policy
-   ↓
-d1 / d2
-   ↓
-Platform HRTIM API
+vL_min = Vin * e1_min - Vout * e2_max
+vL_max = Vin * e1_max - Vout * e2_min
 ```
 
-This is the project’s baseline architecture, not a future optional extension.
+The requested actuation is clamped to this interval before duty allocation.
 
-## Redundant Degree of Freedom
+## Continuous constrained allocator
 
-For a requested `vL*`, many `(d1,d2)` pairs may satisfy the averaged equation. The remaining degree of freedom can be used to optimize engineering objectives such as:
-
-- lower switching activity;
-- lower estimated conduction/switching loss;
-- smaller duty discontinuity from the previous cycle;
-- adequate bootstrap refresh;
-- larger numerical/physical margin from minimum pulse limits;
-- smoother region transitions.
-
-A future allocator may therefore minimize a cost such as:
+For a realizable `vL*`, valid duty pairs lie on:
 
 ```text
-J = w_delta * ||d - d_previous||^2
-  + w_loss  * estimated_loss
-  + w_margin * constraint_penalty
+Vin e1 - Vout e2 = vL*
 ```
 
-subject to the `vL*` equality/approximation and hard safety constraints. This optimization must remain computationally bounded for the STM32F334.
-
-## Operating Regions
-
-Buck, Mixed, and Boost remain useful **modulation regions** because different duty allocations are efficient or physically convenient at different voltage ratios. They are not separate controller identities.
-
-Vendor forward reference behavior uses approximately:
-
-| Voltage relationship | Reference region |
-| --- | --- |
-| `Vout < 0.8 Vin` | Buck |
-| `0.8 Vin <= Vout <= 1.2 Vin` | Mixed |
-| `Vout > 1.2 Vin` | Boost |
-
-and a mixed-mode strategy near:
+The allocator selects the point on the feasible line segment closest to the previous command:
 
 ```text
-d1 ≈ 0.8
+minimize
+    (e1 - e1_prev)^2 + (e2 - e2_prev)^2
+
+subject to
+    Vin e1 - Vout e2 = vL*
+    e1_min <= e1 <= e1_max
+    e2_min <= e2 <= e2_max
 ```
 
-while varying the right-leg duty variable. These values are retained only as known-good reference points. The independent allocator may use different boundaries or a continuous allocation policy.
-
-## Hardware Constraints
-
-A mathematically valid duty pair is not automatically realizable. The modulation layer must enforce:
+The unconstrained orthogonal projection is:
 
 ```text
-0 <= d1 <= 1
-0 <= d2 <= 1
+e_proj = e_prev
+       + ((vL* - a^T e_prev) / (a^T a)) * a
+```
+
+If `e_proj` lies outside the feasible line segment, the allocator selects the nearest segment endpoint.
+
+Output conversion is:
+
+```text
+d1 = e1
+d2 = 1 - e2
+```
+
+This produces a continuous constant-time control allocation without explicit Buck/Mixed/Boost branching in the core control path.
+
+## Null-space interpretation
+
+A direction that does not change ideal average inductor voltage is:
+
+```text
+u = [ Vout, Vin ]^T
+```
+
+because:
+
+```text
+[ Vin, -Vout ] · [ Vout, Vin ] = 0
+```
+
+Movement along this direction redistributes switching effort while preserving the requested `vL*`. The defined allocator uses this redundancy to minimize command movement while satisfying hard constraints.
+
+## Realized actuation
+
+The estimator and anti-windup logic use:
+
+```text
+vL_realized = Vin e1 - Vout e2
+```
+
+not the unconstrained controller request. Saturation metadata accompanies the allocator output.
+
+## Hardware constraints
+
+The modulation layer owns:
+
+```text
+duty bounds
 minimum pulse width
 minimum off-time
-maximum practical duty
-commanded/effective dead-time constraints
+commanded/effective dead-time limits
 bootstrap refresh
 complementary-output legality
 fault-forced inactive state
 ```
 
-Limits are based on the actual hardware/timing implementation, not hidden controller constants.
+A mathematically valid duty pair is invalid if it violates any physical timing constraint.
 
-## Region Selection and Hysteresis
-
-If discrete region labels are used, the scheduler must include anti-chatter behavior such as hysteresis and must expose region transitions as observable events.
-
-A region change may alter switching activity, ripple, sensing noise, and bootstrap conditions even when the controller state is unchanged. Transition handling therefore belongs in modulation and must be deterministic.
-
-## Bumpless Transition
-
-A Buck/Mixed/Boost transition must preserve the controller’s physical actuation request as closely as possible:
+## Operating-region interpretation
 
 ```text
-vL*_before ≈ vL*_after
+Buck-like  : allocation lies near right-leg pass-through boundary
+Mixed-like : both effective duties materially participate
+Boost-like : allocation lies near left-leg pass-through boundary
 ```
 
-while changing the duty allocation smoothly. The allocator should minimize unnecessary `d1` / `d2` discontinuity and return saturation information to the controller for anti-windup.
+These labels are telemetry/analysis descriptions derived from the allocation result. They do not change controller identity, physical port identity, ADC mapping, or timer ownership.
 
-Controller integrators are not reset merely because the modulation region changes unless a specific controller design requires it.
+## Bidirectional operation
 
-## Bidirectional Operation
+The same equations and allocator apply for both energy-flow directions. Direction is represented by signed states and references; hardware channels are never remapped.
 
-Power direction and operating region are separate dimensions. The same physical mapping and duty definitions apply in both directions.
+## Control envelope
+
+The canonical allocator/control model is CCM-oriented. DCM/light-load behavior and zero-current operation are outside the accepted CCM model unless explicitly covered by a controller-specific envelope.
+
+## HRTIM boundary
 
 ```text
-requested direction / signed references
-        ↓
-controller produces signed vL*
-        ↓
-unified allocator
-        ↓
-realizable d1 / d2
+vL*
+ ↓
+feasibility clamp
+ ↓
+continuous e1/e2 allocation
+ ↓
+d1 / d2 + saturation metadata
+ ↓
+platform HRTIM API
 ```
 
-The implementation must not swap ADC channels or timer ownership to reverse power flow.
-
-## DCM, Zero Crossing, and Light Load
-
-The ideal CCM equation remains a useful average command model, but light-load/DCM behavior can invalidate assumptions about current continuity and synchronous conduction.
-
-The modulation layer must eventually define:
-
-- whether reverse current is allowed in each operating state;
-- zero-current crossing policy;
-- synchronous-rectification policy at light load;
-- discontinuous-conduction handling;
-- estimator-confidence requirements before current-dependent actuation.
-
-These policies are part of Phase 3/4 work and are not inferred from vendor examples.
-
-## HRTIM Boundary
-
-The modulation layer outputs logical duties/state requests. Only the platform layer converts those requests to compare-register values and complementary output configuration.
-
-```text
-modulation_request_t
-  d1
-  d2
-  enable request
-  saturation / validity metadata
-        ↓
-platform PWM implementation
-```
-
-The exact C API can evolve, but the ownership boundary may not.
-
-## Validation of New Modulation
-
-Validate the implementation delta using:
-
-- requested `vL*` versus realized average actuation;
-- `d1` / `d2` continuity;
-- HRTIM/gate legality;
-- transition overshoot/current stress;
-- estimator confidence across transitions;
-- bootstrap/minimum-pulse margin;
-- execution time.
-
-Do not repeat vendor Buck/Boost/Mixed characterization as a standalone milestone.
-
-## Design Rules
-
-1. V1.2 physical mapping is Q1/Q4 left and Q2/Q3 right.
-2. Project notation is lower-case `d1` / `d2`.
-3. Controllers request `vL*`; modulation owns duty allocation.
-4. Region labels describe switching/allocation behavior, not different controller laws.
-5. Hard hardware constraints are enforced below controllers.
-6. Direction changes do not remap hardware channels.
-7. Region transitions are bumpless by design and observable in telemetry/capture.
-8. Vendor 0.8/1.2 boundaries are reference values, not architecture constants.
+Only the platform layer converts logical duties into timer compare values, complementary outputs, and dead-time configuration.
