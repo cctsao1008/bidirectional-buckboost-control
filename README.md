@@ -1,10 +1,10 @@
 # ⚡ Bidirectional Buck-Boost Control
 
-A digital-power research platform for a four-switch, non-isolated, bidirectional buck-boost converter based on the STM32F334.
+A ground-up control-system re-architecture for a four-switch, non-isolated, bidirectional buck-boost converter based on the STM32F334.
 
-The project starts from a vendor-proven power stage and focuses on synchronized measurement, inductor-current state estimation without a permanent `iL` sensor, unified bidirectional control, and continuous constrained duty allocation.
+The project treats the existing vendor-proven power stage as the physical plant and redesigns the embedded control system around synchronized measurement, inductor-current state estimation without a permanent `iL` sensor, unified bidirectional control, and continuous constrained duty allocation.
 
-> **Validate the implementation delta, not the vendor-proven baseline.**
+> **Keep the proven power stage. Re-architect the control system.**
 
 ---
 
@@ -12,7 +12,7 @@ The project starts from a vendor-proven power stage and focuses on synchronized 
 
 A four-switch bidirectional buck-boost converter can be described through Buck, Boost, and Mixed operating regions, but those regions do not have to become separate control-architecture states.
 
-This project explores a unified physical-state architecture that:
+This project re-architects the controller around a unified physical-state model that:
 
 - keeps the physical ports fixed;
 - represents power-flow direction with signed quantities;
