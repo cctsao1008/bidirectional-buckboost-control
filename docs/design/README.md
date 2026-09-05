@@ -19,7 +19,7 @@ Design documents describe the system **as it is defined now**: interfaces, equat
 | Control allocation and modulation | `modulation-and-operating-regions.md` |
 | Power Manager states, protection ownership, and recovery | `protection-and-state-machine.md` |
 | Host framing, commands, and wire-format enums | `host-interface-and-uart-protocol.md` |
-| Model hierarchy and parameter semantics | `modeling-strategy.md` |
+| Model hierarchy and parameter semantics | `modeling-architecture.md` |
 | Power-stage control model | `power-stage.md` |
 
 ## Canonical notation
